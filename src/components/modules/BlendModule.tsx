@@ -11,6 +11,8 @@ interface BlendModuleProps {
   setHistoryList: (val: any) => void;
   setActiveTab: (tab: string) => void;
   setPrintBlend: (blend: BlendProcess | null) => void;
+  editingProcess?: BlendProcess | null;
+  setEditingProcess?: (val: BlendProcess | null) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
@@ -23,45 +25,39 @@ export default function BlendModule({
   setHistoryList,
   setActiveTab, 
   setPrintBlend, 
+  editingProcess,
+  setEditingProcess,
   triggerToast 
 }: BlendModuleProps) {
   const [blendName, setBlendName] = useState('');
   const [batchNo, setBatchNo] = useState('');
   const [selectedLots, setSelectedLots] = useState<Record<string, number>>({});
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterMark, setFilterMark] = useState('');
   const [filterGrade, setFilterGrade] = useState('');
 
   // Auto-generate next batch number
   useEffect(() => {
-    let maxNumber = 0;
-    const regex = /^BLEND-LV-(\d{3,})$/;
-    
-    underProcess.forEach(p => {
-      if (p.batchNo) {
-        const match = p.batchNo.match(regex);
-        if (match) {
-          const num = parseInt(match[1], 10);
-          if (num > maxNumber) maxNumber = num;
-        }
-      }
-    });
+    const today = new Date();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    setBatchNo(`G-${mm}-${dd}`);
+  }, []);
 
-    historyList.forEach(h => {
-      if (h.details && h.details.batchNo) {
-        const match = String(h.details.batchNo).match(regex);
-        if (match) {
-          const num = parseInt(match[1], 10);
-          if (num > maxNumber) maxNumber = num;
-        }
-      }
-    });
+  // Handle Revert & Edit
+  useEffect(() => {
+    if (editingProcess) {
+      setBlendName(editingProcess.blendName);
+      
+      const newSelectedLots: Record<string, number> = {};
+      editingProcess.lotsUsed.forEach(lot => {
+        newSelectedLots[lot.lotId] = lot.lotId === 'l-balance' ? lot.weightUsed : (parseFloat(lot.bagsUsed as string) || 0);
+      });
+      setSelectedLots(newSelectedLots);
+      
+      if (setEditingProcess) setEditingProcess(null);
+    }
+  }, [editingProcess, setEditingProcess]);
 
-    const nextBatch = String(maxNumber + 1).padStart(3, '0');
-    setBatchNo(nextBatch);
-  }, [underProcess, historyList]);
-
-  const uniqueMarks = useMemo(() => [...new Set(looseInventory.map(i => i.mark))].filter(Boolean).sort(), [looseInventory]);
   const uniqueGrades = useMemo(() => [...new Set(looseInventory.map(i => i.grade))].filter(Boolean).sort(), [looseInventory]);
 
   const filteredInv = useMemo(() => {
@@ -72,14 +68,14 @@ export default function BlendModule({
 
       const matchesSearch = !searchTerm || 
         i.lotNumber.toLowerCase().includes(searchTerm.toLowerCase()) || 
+        i.mark.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (i.labels && i.labels.some(l => l.toLowerCase().includes(searchTerm.toLowerCase())));
       
-      const matchesMark = !filterMark || i.mark === filterMark;
       const matchesGrade = !filterGrade || i.grade === filterGrade;
 
-      return matchesSearch && matchesMark && matchesGrade;
+      return matchesSearch && matchesGrade;
     });
-  }, [looseInventory, searchTerm, filterMark, filterGrade]);
+  }, [looseInventory, searchTerm, filterGrade]);
 
   const handleLotSelect = (lotId: string, checked: boolean) => {
     const newSelected = { ...selectedLots };
@@ -173,7 +169,7 @@ export default function BlendModule({
     const newBlend: BlendProcess = {
       id: 'BLD-' + Date.now().toString().slice(-6),
       blendName,
-      batchNo: finalBatchNo,
+      batchNo: batchNo,
       totalQuantity: totalBlendWeight,
       status: 'PENDING',
       date: new Date().toISOString().split('T')[0],
@@ -187,7 +183,7 @@ export default function BlendModule({
     const creationHistory = {
       id: `HST-${Date.now()}`,
       type: 'BLEND_INITIATED',
-      desc: `Initiated blend instruction: ${blendName} (${finalBatchNo || 'No Batch'}) for ${totalBlendWeight.toFixed(2)} kg.`,
+      desc: `Initiated blend instruction: ${blendName} (${batchNo || 'No Batch'}) for ${totalBlendWeight.toFixed(2)} kg.`,
       timestamp: new Date().toISOString(),
       details: newBlend
     };
@@ -221,10 +217,9 @@ export default function BlendModule({
           <input type="text" placeholder="e.g. Ledo Premium Classic" value={blendName} onChange={(e) => setBlendName(e.target.value)} className="w-full px-4 py-3 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus:bg-white focus:ring-2 focus:ring-[#009965]/20 focus:border-[#009965] outline-none transition-all duration-200 text-sm font-medium text-[#0B172B] placeholder-[#0B172B]/40" />
         </div>
         <div>
-          <label className="block text-xs font-bold text-[#0B172B]/70 uppercase mb-1">Batch Code Prefix (Fixed) & Number *</label>
-          <div className="flex items-center w-full px-4 py-3 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus-within:bg-white focus-within:ring-2 focus-within:ring-[#009965]/20 focus-within:border-[#009965] transition-all duration-200">
-            <span className="text-[#0B172B]/60 font-bold text-sm mr-1 select-none">BLEND-LV-</span>
-            <input type="text" placeholder="001" value={batchNo} onChange={(e) => setBatchNo(e.target.value)} className="bg-transparent outline-none text-sm font-medium text-[#0B172B] placeholder-[#0B172B]/40 flex-1 w-full" />
+          <label className="block text-xs font-bold text-[#0B172B]/70 uppercase mb-1">Batch Code (Fixed)</label>
+          <div className="flex items-center w-full px-4 py-3 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 transition-all duration-200">
+            <input type="text" value={batchNo} readOnly className="bg-transparent outline-none text-sm font-bold text-[#0B172B] flex-1 w-full" />
           </div>
         </div>
       </div>
@@ -244,14 +239,6 @@ export default function BlendModule({
               />
             </div>
             <select
-              value={filterMark}
-              onChange={e => setFilterMark(e.target.value)}
-              className="w-full sm:w-40 py-2 px-3 text-xs border border-[#0B172B]/10 rounded-xl bg-white outline-none text-[#0B172B]/70 font-medium focus:ring-1 focus:ring-[#009965]"
-            >
-              <option value="">All Marks</option>
-              {uniqueMarks.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-            <select
               value={filterGrade}
               onChange={e => setFilterGrade(e.target.value)}
               className="w-full sm:w-40 py-2 px-3 text-xs border border-[#0B172B]/10 rounded-xl bg-white outline-none text-[#0B172B]/70 font-medium focus:ring-1 focus:ring-[#009965]"
@@ -266,7 +253,9 @@ export default function BlendModule({
             <thead className="bg-[#F0F5F9] sticky top-0 z-10">
               <tr>
                 <th className="p-3 w-12 text-center border-b border-[#0B172B]/8">Select</th>
-                <th className="p-3 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Lot Details</th>
+                <th className="p-3 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Lot No.</th>
+                <th className="p-3 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Brand (Mark)</th>
+                <th className="p-3 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Grade</th>
                 <th className="p-3 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Labels</th>
                 <th className="p-3 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider text-right border-b border-[#0B172B]/8">Available Stock</th>
                 <th className="p-3 font-bold text-xs text-[#0B172B] uppercase tracking-wider text-right w-44 bg-[#F0F5F9]/50 border-b border-[#0B172B]/8">Allocated Input</th>
@@ -285,7 +274,12 @@ export default function BlendModule({
                   </td>
                   <td className="p-3">
                     <div className="font-bold text-[#0B172B] text-sm">{lot.lotNumber}</div>
-                    <div className="text-xs text-[#0B172B]/55">{lot.mark} — {lot.grade}</div>
+                  </td>
+                  <td className="p-3">
+                    <div className="font-semibold text-[#0B172B]/80 text-sm">{lot.mark}</div>
+                  </td>
+                  <td className="p-3">
+                    <div className="text-sm text-[#0B172B]/70">{lot.grade}</div>
                   </td>
                   <td className="p-3">
                     <div className="flex flex-wrap gap-1">

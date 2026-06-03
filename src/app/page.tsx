@@ -8,7 +8,7 @@ import ProcessModule from "@/components/modules/ProcessModule";
 import HistoryModule from "@/components/modules/HistoryModule";
 
 import { signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, getDocs, query, orderBy, deleteDoc } from 'firebase/firestore';
 
 // Import our local initialized Firebase instances
 import { auth, db } from '../lib/firebase';
@@ -85,6 +85,11 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [systemUser, setSystemUser] = useState<SystemUser | null>(null);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
+  const [showBackupModal, setShowBackupModal] = useState(false);
+  const [availableBackups, setAvailableBackups] = useState<any[]>([]);
+  
+  const [editingProcess, setEditingProcess] = useState<BlendProcess | null>(null);
+
   const [loadingHintIndex, setLoadingHintIndex] = useState(0);
   const loadingHints = [
     "Connecting to Backend Service...",
@@ -236,7 +241,52 @@ export default function App() {
     return () => unsubscribe();
   }, [user, systemUser]);
 
-
+  // 3. Automated Backup Routine
+  useEffect(() => {
+    if (!isDataLoaded || !user) return;
+    
+    let hasRun = false; // Prevent multiple runs per mount
+    
+    const checkAndRunBackup = async () => {
+      if (hasRun) return;
+      hasRun = true;
+      
+      try {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const backupRef = doc(db, 'artifacts', appId, 'backups', todayStr);
+        const docSnap = await getDoc(backupRef);
+        
+        if (!docSnap.exists()) {
+          // Create backup
+          await setDoc(backupRef, {
+            date: todayStr,
+            timestamp: Date.now(),
+            loose: localLooseInventory,
+            catalog: localPacketCatalog,
+            process: localUnderProcess,
+            history: localHistoryList
+          });
+          
+          // Prune old backups
+          const backupsRef = collection(db, 'artifacts', appId, 'backups');
+          const q = query(backupsRef, orderBy('timestamp', 'desc'));
+          const snapshot = await getDocs(q);
+          const backups = snapshot.docs;
+          
+          if (backups.length > 3) {
+            for (let i = 3; i < backups.length; i++) {
+              await deleteDoc(backups[i].ref);
+            }
+          }
+          console.log("Daily backup successfully completed.");
+        }
+      } catch (error) {
+        console.error("Backup failed", error);
+      }
+    };
+    
+    checkAndRunBackup();
+  }, [isDataLoaded, user]);
 
   // 4. Print Listener
   useEffect(() => {
@@ -279,7 +329,9 @@ export default function App() {
       if (item.id === id) {
         const newBags = parseInt(updatedData.bags) || 0;
         const newWpb = parseFloat(updatedData.weightPerBag) || 0;
-        const newLabels = (updatedData.labels || '').split(',').map((l: string) => l.trim()).filter((l: string) => l);
+        const newLabels = Array.isArray(updatedData.labels) 
+          ? updatedData.labels 
+          : (updatedData.labels || '').split(',').map((l: string) => l.trim()).filter((l: string) => l);
         return {
           ...item,
           lotNumber: updatedData.lotNumber,
@@ -304,7 +356,9 @@ export default function App() {
           name: updatedData.name,
           unit: updatedData.unit,
           size: parseFloat(updatedData.size) || 0,
-          stock: parseFloat(updatedData.stock) || 0
+          stock: parseFloat(updatedData.stock) || 0,
+          hsnCode: updatedData.hsnCode || '',
+          gstRate: updatedData.gstRate !== undefined ? updatedData.gstRate : 5
         };
       }
       return item;
@@ -347,6 +401,65 @@ export default function App() {
     }
   };
 
+  const handleRevertAndEditProcess = (blend: BlendProcess) => {
+    // 1. Return the lots to loose inventory
+    setLooseInventory(prev => prev.map(lot => {
+      const usedLot = blend.lotsUsed.find(l => l.lotId === lot.id);
+      if (usedLot) {
+        if (lot.id === 'l-balance') {
+          return { ...lot, weight: lot.weight + usedLot.weightUsed };
+        } else {
+          return { 
+            ...lot, 
+            bags: lot.bags + (usedLot.bagsUsed === '-' ? 0 : parseFloat(usedLot.bagsUsed as string) || 0),
+            weight: lot.weight + usedLot.weightUsed 
+          };
+        }
+      }
+      return lot;
+    }));
+
+    // 2. Remove from under process
+    setUnderProcess(prev => prev.filter(b => b.id !== blend.id));
+
+    // 3. Set to editing mode and change tab
+    setEditingProcess(blend);
+    setActiveTab('blend');
+    triggerToast("Blend reverted. You can now edit its details and resubmit.");
+  };
+
+  useEffect(() => {
+    if (showBackupModal) {
+      const fetchBackups = async () => {
+        try {
+          const backupsRef = collection(db, 'artifacts', appId, 'backups');
+          const q = query(backupsRef, orderBy('timestamp', 'desc'));
+          const snapshot = await getDocs(q);
+          setAvailableBackups(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+        } catch (e) {
+          console.error(e);
+        }
+      };
+      fetchBackups();
+    }
+  }, [showBackupModal]);
+
+  const handleRestoreBackup = async (backup: any) => {
+    if (confirm(`Are you absolutely sure you want to restore the system to ${backup.date}? All current data will be overwritten.`)) {
+      setLocalPacketCatalog(backup.catalog || []);
+      setLocalLooseInventory(backup.loose || []);
+      setLocalUnderProcess(backup.process || []);
+      setLocalHistoryList(backup.history || []);
+      
+      await setDoc(doc(db, 'artifacts', appId, 'globalData', 'catalog'), { items: backup.catalog || [] });
+      await setDoc(doc(db, 'artifacts', appId, 'globalData', 'loose'), { items: backup.loose || [] });
+      await setDoc(doc(db, 'artifacts', appId, 'globalData', 'process'), { items: backup.process || [] });
+      await setDoc(doc(db, 'artifacts', appId, 'globalData', 'history'), { items: backup.history || [] });
+      
+      setShowBackupModal(false);
+      triggerToast("System successfully restored from backup.");
+    }
+  };
 
   if (!authChecked) {
     return (
@@ -425,6 +538,41 @@ export default function App() {
         </div>
       )}
 
+      {showBackupModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden transform transition-all">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-bold text-slate-900">Database Backups</h3>
+                <button onClick={() => setShowBackupModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+              </div>
+              <p className="text-sm text-slate-600 mb-6">The system automatically saves a daily snapshot. You can restore your entire database to one of the recent backups below.</p>
+              
+              <div className="space-y-3">
+                {availableBackups.length === 0 ? (
+                  <p className="text-sm text-slate-500 italic text-center py-4">No backups found yet.</p>
+                ) : (
+                  availableBackups.map(b => (
+                    <div key={b.id} className="flex items-center justify-between p-3 rounded-lg border border-slate-100 bg-slate-50">
+                      <div>
+                        <p className="font-bold text-[#0B172B]">{b.date}</p>
+                        <p className="text-xs text-slate-500">{new Date(b.timestamp).toLocaleTimeString()}</p>
+                      </div>
+                      <button 
+                        onClick={() => handleRestoreBackup(b)}
+                        className="px-3 py-1.5 bg-[#009965]/10 text-[#009965] hover:bg-[#009965] hover:text-white rounded font-semibold text-xs transition-colors"
+                      >
+                        Restore
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Mobile Header Bar */}
       <div className="lg:hidden bg-slate-900 text-white p-4 flex justify-between items-center shadow-md shrink-0 z-20">
         <div className="flex items-center gap-2">
@@ -454,6 +602,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         navItems={navItems}
         systemUser={systemUser}
+        setShowBackupModal={setShowBackupModal}
       />
 
         <div className="flex-1 flex flex-col h-screen overflow-hidden bg-[#F0F5F9]">
@@ -489,6 +638,8 @@ export default function App() {
                 setHistoryList={setHistoryList}
                 setActiveTab={setActiveTab} 
                 setPrintBlend={setPrintBlend}
+                editingProcess={editingProcess}
+                setEditingProcess={setEditingProcess}
                 triggerToast={triggerToast} 
               />
             )}
@@ -503,6 +654,7 @@ export default function App() {
                 historyList={localHistoryList} 
                 setHistoryList={setHistoryList} 
                 setPrintBlend={setPrintBlend}
+                onRevertAndEdit={handleRevertAndEditProcess}
                 triggerToast={triggerToast} 
               />
             )}

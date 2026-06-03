@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { 
   Boxes, ArrowRight, TrendingDown, Trash2, 
-  Plus, Combine, Settings2, Check, Printer 
+  Plus, Combine, Settings2, Check, Printer, Edit2 
 } from 'lucide-react';
 import { BlendProcess, CatalogProduct, LooseLot, HistoryRecord } from '@/types';
 
@@ -15,6 +15,7 @@ interface ProcessModuleProps {
   historyList: HistoryRecord[];
   setHistoryList: React.Dispatch<React.SetStateAction<HistoryRecord[]>>;
   setPrintBlend: (blend: BlendProcess | null) => void;
+  onRevertAndEdit: (blend: BlendProcess) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
@@ -28,6 +29,7 @@ export default function ProcessModule({
   historyList, 
   setHistoryList, 
   setPrintBlend,
+  onRevertAndEdit,
   triggerToast 
 }: ProcessModuleProps) {
   const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
@@ -355,7 +357,14 @@ export default function ProcessModule({
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex justify-end gap-2 flex-wrap">
+                <button 
+                  onClick={() => onRevertAndEdit(blend)}
+                  className="bg-white text-blue-600 border border-[#0B172B]/10 hover:bg-blue-50 px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                  title="Revert & Edit Blend"
+                >
+                  <Edit2 size={14} /> Edit
+                </button>
                 <button 
                   onClick={() => setPrintBlend(blend)}
                   className="bg-white text-[#0B172B]/70 border border-[#0B172B]/10 hover:bg-[#F0F5F9] hover:text-[#009965] px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
