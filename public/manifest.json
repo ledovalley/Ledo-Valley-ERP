@@ -1,0 +1,16 @@
+{
+  "name": "Ledo Valley ERP",
+  "short_name": "LedoPro",
+  "description": "Warehouse Management System for Ledo Valley ERP",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#10b981",
+  "icons": [
+    {
+      "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMTBiOTgxIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTE3IDhoMWE0IDQgMCAxIDEgMCA4aC0xIi8+PHBhdGggZD0iTTMgOGgxNHY5YTQgNCAwIDAgMS00IDRIN2E0IDQgMCAwIDEtNC00WiIvPjxsaW5lIHgxPSI2IiB4Mj0iNiIgeTE9IjIiIHkyPSI0Ii8+PGxpbmUgeDE9IjEwIiB4Mj0iMTAiIHkxPSIyIiB5Mj0iNCIvPjxsaW5lIHgxPSIxNCIgeDI9IjE0IiB5MT0iMiIgeTI9IjQiLz48L3N2Zz4=",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
