@@ -174,8 +174,17 @@ export default function ProcessModule({
   const submitFinalization = () => {
     if (!activeFinalizingBlend) return;
     
-    if (producedLines.some(line => line.productId && !line.quantity)) {
-      return triggerToast("Select a quantity for all selected output lines.", "error");
+    for (let i = 0; i < producedLines.length; i++) {
+      if (!producedLines[i].productId) {
+        return triggerToast(`Line ${i + 1}: Please select a catalog product.`, "error");
+      }
+      if (parseFloat(producedLines[i].quantity) <= 0 || isNaN(parseFloat(producedLines[i].quantity))) {
+        return triggerToast(`Line ${i + 1}: Quantity must be greater than 0.`, "error");
+      }
+    }
+
+    if (!window.confirm(`Are you sure you want to declare this blend complete? This will finalize the output and update your packet stock inventory.`)) {
+      return;
     }
 
     setPacketCatalog(prev => {

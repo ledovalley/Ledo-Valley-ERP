@@ -113,9 +113,23 @@ export default function BlendModule({
   }, [selectedLots, looseInventory]);
 
   const handleSubmitBlend = () => {
-    if (!blendName) return triggerToast("Blend Target Name is required", "error");
-    if (Object.keys(selectedLots).length === 0) return triggerToast("Please select at least one lot to compose the blend", "error");
-    if (totalBlendWeight <= 0) return triggerToast("Selected blend input weight must be greater than zero", "error");
+    if (!blendName.trim()) {
+      triggerToast("Please provide a target blend name.", "error");
+      return;
+    }
+    if (Object.keys(selectedLots).length === 0) {
+      triggerToast("Please select at least one lot to blend.", "error");
+      return;
+    }
+
+    if (totalBlendWeight <= 0) {
+      triggerToast("Selected blend input weight must be greater than zero.", "error");
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to submit the blend instruction for "${blendName}"? This will deduct the selected lots from your loose inventory.`)) {
+      return;
+    }
     
     const finalBatchNo = `BLEND-LV-${batchNo}`;
     

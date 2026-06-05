@@ -496,16 +496,14 @@ export default function App() {
     setHistoryList(prev => prev.filter(h => h.id !== record.id));
 
     // 4. Push blend back to under process
-    const revertedBlend: BlendProcess = {
-      ...blendDetails,
-      status: 'Pending',
-      completedDate: undefined,
-      totalOutputQuantity: undefined,
-      returnedLooseWeight: undefined,
-      producedItems: undefined
-    };
+    const revertedBlend: any = { ...blendDetails };
+    revertedBlend.status = 'PENDING';
+    delete revertedBlend.completedDate;
+    delete revertedBlend.totalOutputQuantity;
+    delete revertedBlend.returnedLooseWeight;
+    delete revertedBlend.producedItems;
     
-    setUnderProcess(prev => [revertedBlend, ...prev]);
+    setUnderProcess(prev => [revertedBlend as BlendProcess, ...prev]);
 
     triggerToast(`Finalization reversed! "${blendDetails.blendName}" is back under process.`);
   };
