@@ -19,6 +19,68 @@ interface ProcessModuleProps {
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
+function SearchableProductSelect({ value, onChange, catalog }: { value: string, onChange: (val: string) => void, catalog: CatalogProduct[] }) {
+  const [search, setSearch] = React.useState('');
+  const [isOpen, setIsOpen] = React.useState(false);
+  const wrapperRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const selected = catalog.find(p => p.id === value);
+    if (selected && !isOpen) {
+      setSearch(`${selected.name} (${selected.unit})`);
+    } else if (!value && !isOpen) {
+      setSearch('');
+    }
+  }, [value, catalog, isOpen]);
+
+  React.useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [wrapperRef]);
+
+  const filtered = catalog.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div className="relative w-full" ref={wrapperRef}>
+      <input
+        type="text"
+        placeholder="-- Search Master Product --"
+        value={search}
+        onFocus={() => { setIsOpen(true); setSearch(''); }}
+        onChange={(e) => { setSearch(e.target.value); setIsOpen(true); }}
+        className="w-full px-4 py-3 border border-[#0B172B]/10 rounded-xl bg-white focus:ring-2 focus:ring-[#009965]/30 outline-none transition-all shadow-sm text-sm text-[#0B172B]"
+      />
+      {isOpen && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-[#0B172B]/10 rounded-xl shadow-[0_10px_25px_rgba(0,0,0,0.1)] max-h-60 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <div className="p-3 text-sm text-[#0B172B]/50 italic">No matching products...</div>
+          ) : (
+            filtered.map(p => (
+              <div 
+                key={p.id}
+                className="px-4 py-2 hover:bg-[#F0F5F9] cursor-pointer text-sm text-[#0B172B] border-b border-gray-50 last:border-0"
+                onClick={() => {
+                  onChange(p.id);
+                  setSearch(`${p.name} (${p.unit})`);
+                  setIsOpen(false);
+                }}
+              >
+                <div className="font-bold">{p.name}</div>
+                <div className="text-[#0B172B]/50 text-xs">Size: {p.size} kg • Unit: {p.unit}</div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ProcessModule({ 
   underProcess, 
   setUnderProcess, 
@@ -215,16 +277,11 @@ export default function ProcessModule({
                       <div key={index} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 bg-[#F0F5F9]/30 p-3 rounded-xl border border-[#0B172B]/8 relative">
                         <div className="flex-1">
                           <label className="block sm:hidden text-[10px] font-semibold text-[#0B172B]/55">Catalog Product</label>
-                          <select 
+                          <SearchableProductSelect 
                             value={item.productId}
-                            onChange={(e) => handleProductLineChange(index, 'productId', e.target.value)}
-                            className="w-full px-4 py-3 border border-[#0B172B]/10 rounded-xl bg-white focus:ring-2 focus:ring-[#009965]/30 outline-none transition-all shadow-sm text-sm text-[#0B172B]"
-                          >
-                            <option value="">-- Select Master Product --</option>
-                            {packetCatalog.map(p => (
-                              <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>
-                            ))}
-                          </select>
+                            onChange={(val) => handleProductLineChange(index, 'productId', val)}
+                            catalog={packetCatalog}
+                          />
                         </div>
                         <div className="w-full sm:w-32">
                           <label className="block sm:hidden text-[10px] font-semibold text-[#0B172B]/55">Quantity</label>

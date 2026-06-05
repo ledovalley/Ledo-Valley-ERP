@@ -87,6 +87,7 @@ export default function App() {
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [availableBackups, setAvailableBackups] = useState<any[]>([]);
+  const [showBackupReminder, setShowBackupReminder] = useState(false);
   
   const [editingProcess, setEditingProcess] = useState<BlendProcess | null>(null);
 
@@ -280,6 +281,12 @@ export default function App() {
           }
           console.log("Daily backup successfully completed.");
         }
+
+        // Check if user downloaded today's backup
+        const lastDownloaded = localStorage.getItem('lastDownloadedBackupDate');
+        if (lastDownloaded !== todayStr) {
+          setShowBackupReminder(true);
+        }
       } catch (error) {
         console.error("Backup failed", error);
       }
@@ -298,6 +305,38 @@ export default function App() {
       }, 500); 
     }
   }, [printBlend]);
+
+  // 5. One-time wipe for history
+  useEffect(() => {
+    if (isDataLoaded && localStorage.getItem('history_wiped_v1') !== 'true') {
+      setHistoryList([]);
+      localStorage.setItem('history_wiped_v1', 'true');
+      console.log('History wiped per client request.');
+    }
+  }, [isDataLoaded]);
+
+  // Handle Export Full Backup JSON
+  const handleExportFullBackup = () => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const data = {
+      date: todayStr,
+      loose: localLooseInventory,
+      catalog: localPacketCatalog,
+      process: localUnderProcess,
+      history: localHistoryList
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `LedoValleyERP_Backup_${todayStr}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    localStorage.setItem('lastDownloadedBackupDate', todayStr);
+    setShowBackupReminder(false);
+    triggerToast("Backup downloaded successfully! Please save it to your Google Drive.");
+  };
 
   const handleDeleteLooseItem = (id: string) => {
     if (id === 'l-balance') {
@@ -428,6 +467,49 @@ export default function App() {
     triggerToast("Blend reverted. You can now edit its details and resubmit.");
   };
 
+  const handleUndoFinalization = (record: HistoryRecord) => {
+    const blendDetails = record.details as any;
+    if (!blendDetails) return;
+
+    // 1. Deduct yields from packet catalog
+    if (blendDetails.producedItems) {
+      setPacketCatalog(prev => prev.map(catItem => {
+        const matchingProduced = blendDetails.producedItems.find((p: any) => p.productName === catItem.name);
+        if (matchingProduced) {
+          return { ...catItem, stock: catItem.stock - matchingProduced.quantity };
+        }
+        return catItem;
+      }));
+    }
+
+    // 2. Deduct returned loose scrap from l-balance
+    if (blendDetails.returnedLooseWeight > 0) {
+      setLooseInventory(prev => prev.map(lot => {
+        if (lot.id === 'l-balance') {
+          return { ...lot, weight: lot.weight - blendDetails.returnedLooseWeight };
+        }
+        return lot;
+      }));
+    }
+
+    // 3. Delete history record
+    setHistoryList(prev => prev.filter(h => h.id !== record.id));
+
+    // 4. Push blend back to under process
+    const revertedBlend: BlendProcess = {
+      ...blendDetails,
+      status: 'Pending',
+      completedDate: undefined,
+      totalOutputQuantity: undefined,
+      returnedLooseWeight: undefined,
+      producedItems: undefined
+    };
+    
+    setUnderProcess(prev => [revertedBlend, ...prev]);
+
+    triggerToast(`Finalization reversed! "${blendDetails.blendName}" is back under process.`);
+  };
+
   useEffect(() => {
     if (showBackupModal) {
       const fetchBackups = async () => {
@@ -535,6 +617,26 @@ export default function App() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {showBackupReminder && (
+        <div className="fixed top-20 right-4 z-40 bg-white p-4 rounded-xl shadow-2xl border border-amber-200 animate-slide-in flex flex-col gap-3 max-w-[320px]">
+          <div className="flex items-start gap-3">
+            <div className="bg-amber-100 p-2 rounded-full shrink-0">
+              <Cloud size={20} className="text-amber-600" />
+            </div>
+            <div>
+              <h4 className="font-bold text-[#0B172B] text-sm leading-tight">Daily Backup Ready</h4>
+              <p className="text-xs text-[#0B172B]/60 mt-1">You haven't downloaded today's database snapshot. Please save it to your Google Drive.</p>
+            </div>
+          </div>
+          <button 
+            onClick={handleExportFullBackup}
+            className="w-full bg-[#009965] hover:bg-[#004825] text-white font-bold py-2 rounded-lg text-xs transition-colors shadow-sm flex items-center justify-center gap-2"
+          >
+            <Download size={14} /> Download Now
+          </button>
         </div>
       )}
 
@@ -659,7 +761,11 @@ export default function App() {
               />
             )}
             {activeTab === 'history' && (
-              <HistoryModule historyList={localHistoryList} />
+              <HistoryModule 
+                historyList={localHistoryList}
+                systemUser={systemUser}
+                onUndoFinalization={handleUndoFinalization}
+              />
             )}
             {activeTab === 'users' && systemUser.role === 'super_admin' && (
               <UserManagementModule 

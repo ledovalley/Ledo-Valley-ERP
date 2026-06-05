@@ -1,14 +1,16 @@
 import React, { useState, useMemo } from 'react';
-import { Network, ArrowDown, Search, Download, Filter, FileText, File } from 'lucide-react';
-import { HistoryRecord } from '@/types';
+import { Network, ArrowDown, Search, Download, Filter, FileText, File, X } from 'lucide-react';
+import { HistoryRecord, SystemUser } from '@/types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 interface HistoryModuleProps {
   historyList: HistoryRecord[];
+  systemUser: SystemUser;
+  onUndoFinalization?: (record: HistoryRecord) => void;
 }
 
-export default function HistoryModule({ historyList }: HistoryModuleProps) {
+export default function HistoryModule({ historyList, systemUser, onUndoFinalization }: HistoryModuleProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [userFilter, setUserFilter] = useState('');
   const [actionFilter, setActionFilter] = useState('');
@@ -124,10 +126,30 @@ export default function HistoryModule({ historyList }: HistoryModuleProps) {
           <div className="bg-white rounded-2xl max-w-xl w-full border border-[#0B172B]/10 overflow-hidden transform transition-all flex flex-col max-h-[90vh]">
             <div className="p-5 border-b border-[#0B172B]/8 bg-[#F0F5F9]/50 flex justify-between items-center">
               <div>
-                <h3 className="text-lg font-bold text-[#0B172B] flex items-center gap-2"><Network size={20} className="text-[#009965]"/> Batch Traceability Tree</h3>
+                <h3 className="text-lg font-bold text-[#0B172B] flex items-center gap-2">
+                  <Network size={22} className="text-[#009965]" />
+                  Batch Traceability Tree
+                </h3>
                 <p className="text-xs text-[#0B172B]/55 mt-1 font-mono">{traceModalData.id} {traceModalData.details.batchNo && `• BATCH: ${traceModalData.details.batchNo}`}</p>
               </div>
-              <button onClick={() => setTraceModalData(null)} className="text-[#0B172B]/40 hover:text-[#0B172B] bg-[#F0F5F9] hover:bg-[#0B172B]/10 rounded-full p-1.5 transition-colors">✕</button>
+              <div className="flex items-center gap-3">
+                  {traceModalData.type === 'Finalized Process' && systemUser.role === 'super_admin' && onUndoFinalization && (
+                    <button 
+                      onClick={() => {
+                        if (confirm(`Are you sure you want to undo the finalization of "${traceModalData.details.blendName}"? This will deduct the created products from your catalog stock and move the blend back to Under Process.`)) {
+                          onUndoFinalization(traceModalData);
+                          setTraceModalData(null);
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-rose-100 text-rose-700 hover:bg-rose-200 rounded font-semibold text-xs transition-colors flex items-center gap-1 border border-rose-200"
+                    >
+                      Undo Finalization
+                    </button>
+                  )}
+                  <button onClick={() => setTraceModalData(null)} className="text-[#0B172B]/40 hover:text-[#0B172B] transition-colors p-1 bg-[#F0F5F9] rounded-full">
+                    <X size={20} />
+                  </button>
+                </div>
             </div>
             
             <div className="p-6 overflow-y-auto flex-1 flex flex-col items-center gap-4">
