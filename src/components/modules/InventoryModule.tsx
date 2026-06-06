@@ -18,7 +18,7 @@ interface InventoryModuleProps {
   onUnlockRequest: () => void;
   onLockRequest: () => void;
   onAddCatalogProduct: (product: { name: string; unit: string; size: number; hsnCode?: string; gstRate?: number }) => void;
-  onLedgerAdjustment?: (amount: number, reason: string) => void;
+  onLedgerAdjustment?: (targetId: string, amount: number, reason: string) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
@@ -60,7 +60,7 @@ export default function InventoryModule({
 
   const [showLedgerAdjustment, setShowLedgerAdjustment] = useState(false);
   const [ledgerAdjustmentForm, setLedgerAdjustmentForm] = useState({
-    amount: '', reason: ''
+    targetId: 'l-balance', amount: '', reason: ''
   });
 
   const calculatedLooseTotalWeight = useMemo(() => {
@@ -128,9 +128,10 @@ export default function InventoryModule({
     const amount = parseFloat(ledgerAdjustmentForm.amount);
     if (!amount) return triggerToast('Please enter a valid amount', 'error');
     if (!ledgerAdjustmentForm.reason.trim()) return triggerToast('Please provide a reason for this adjustment', 'error');
+    if (!ledgerAdjustmentForm.targetId) return triggerToast('Please select a target ledger/lot', 'error');
     
-    onLedgerAdjustment(amount, ledgerAdjustmentForm.reason);
-    setLedgerAdjustmentForm({ amount: '', reason: '' });
+    onLedgerAdjustment(ledgerAdjustmentForm.targetId, amount, ledgerAdjustmentForm.reason);
+    setLedgerAdjustmentForm({ targetId: 'l-balance', amount: '', reason: '' });
     setShowLedgerAdjustment(false);
   };
 
@@ -272,8 +273,8 @@ export default function InventoryModule({
   const exportLooseCSV = () => {
     let csv = "Lot Number,Mark,Grade,Bags,Weight Per Bag (kg),Total Weight (kg),Date Received,Labels\n";
     filteredLoose.forEach(l => {
-      const isBalance = l.id === 'l-balance';
-      csv += `"${l.lotNumber}","${l.mark}","${l.grade}","${isBalance ? '-' : l.bags}","${isBalance ? '-' : l.weightPerBag}","${l.weight.toFixed(2)}","${l.date}","${(l.labels || []).join(', ')}"\n`;
+      const isSystem = l.id.startsWith('l-');
+      csv += `"${l.lotNumber}","${l.mark}","${l.grade}","${isSystem ? '-' : l.bags}","${isSystem ? '-' : l.weightPerBag}","${l.weight.toFixed(2)}","${l.date}","${(l.labels || []).join(', ')}"\n`;
     });
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
@@ -308,13 +309,13 @@ export default function InventoryModule({
     doc.text(`Exported on: ${new Date().toLocaleDateString()}`, 14, 28);
 
     const tableData = filteredLoose.map(l => {
-      const isBalance = l.id === 'l-balance';
+      const isSystem = l.id.startsWith('l-');
       return [
         l.lotNumber,
         l.mark,
         l.grade,
-        isBalance ? '-' : l.bags,
-        isBalance ? '-' : l.weightPerBag,
+        isSystem ? '-' : l.bags,
+        isSystem ? '-' : l.weightPerBag,
         l.weight.toFixed(2),
         l.date,
         (l.labels || []).join(', ')
@@ -775,8 +776,8 @@ export default function InventoryModule({
                         </td>
                         <td className="p-4 font-medium">{item.mark}</td>
                         <td className="p-4">{item.grade}</td>
-                        <td className="p-4 text-right font-medium">{item.id === 'l-balance' ? '-' : `${item.bags} bags`}</td>
-                        <td className="p-4 text-right text-[#0B172B]/55 font-mono">{item.id === 'l-balance' ? '-' : (item.weightPerBag ? `${parseFloat(item.weightPerBag.toString()).toFixed(2)} kg` : '-')}</td>
+                        <td className="p-4 text-right font-medium">{item.id.startsWith('l-') ? '-' : `${item.bags} bags`}</td>
+                        <td className="p-4 text-right text-[#0B172B]/55 font-mono">{item.id.startsWith('l-') ? '-' : (item.weightPerBag ? `${parseFloat(item.weightPerBag.toString()).toFixed(2)} kg` : '-')}</td>
                         <td className="p-4 text-right font-bold text-[#0B172B] bg-[#F0F5F9] font-mono">{item.weight.toFixed(2)} kg</td>
                         <td className="p-4">
                           <div className="flex flex-wrap gap-1">
@@ -787,21 +788,11 @@ export default function InventoryModule({
                         </td>
                         <td className="p-4 text-center">
                           <div className="flex items-center justify-center gap-2">
-                            {item.id === 'l-balance' ? (
+                            {item.id.startsWith('l-') ? (
                               <div className="flex flex-col gap-1 items-center">
-                                <div className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2 py-1 rounded tracking-wide">
-                                  <Shield size={12} className="text-emerald-500" /> SYSTEM LEDGER
+                                <div className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2 py-1 rounded tracking-wide uppercase">
+                                  <Shield size={12} className="text-emerald-500" /> {item.mark}
                                 </div>
-                                {onLedgerAdjustment && (
-                                  <button 
-                                    onClick={() => setShowLedgerAdjustment(true)}
-                                    className={`px-2 py-1 rounded text-[10px] font-bold transition-all flex items-center gap-1 ${isCatalogUnlocked ? 'bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-200' : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'}`}
-                                    title={isCatalogUnlocked ? "Adjust Ledger Balance" : "Elevated access required"}
-                                    disabled={!isCatalogUnlocked}
-                                  >
-                                    <Edit2 size={10} /> Adjust Balance
-                                  </button>
-                                )}
                               </div>
                             ) : (
                               <>
@@ -1031,30 +1022,64 @@ export default function InventoryModule({
 
       {showLedgerAdjustment && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden transform transition-all animate-slide-up">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden transform transition-all animate-slide-up">
             <div className="p-5 border-b border-[#0B172B]/8 bg-[#F0F5F9]/50 flex justify-between items-center">
               <div>
-                <h3 className="text-lg font-bold text-[#0B172B] flex items-center gap-2"><Edit2 size={18} className="text-amber-500"/> Adjust System Ledger</h3>
-                <p className="text-xs text-[#0B172B]/55 mt-1">Directly adjust the loose tea balance.</p>
+                <h3 className="text-lg font-bold text-[#0B172B] flex items-center gap-2"><Edit2 size={18} className="text-amber-500"/> Adjust Ledger / Lot</h3>
+                <p className="text-xs text-[#0B172B]/55 mt-1">Directly adjust inventory weights.</p>
               </div>
               <button onClick={() => setShowLedgerAdjustment(false)} className="text-[#0B172B]/40 hover:text-[#0B172B] bg-[#F0F5F9] hover:bg-[#0B172B]/10 rounded-full p-1.5 transition-colors">✕</button>
             </div>
             
-            <form onSubmit={handleLedgerAdjustmentSubmit} className="p-5 space-y-4">
+            <form onSubmit={handleLedgerAdjustmentSubmit} className="p-6 space-y-5">
+              
               <div>
-                <label className="block text-xs font-bold text-[#0B172B]/70 uppercase tracking-wider mb-1">Adjustment Amount (kg) *</label>
-                <p className="text-[10px] text-amber-600 mb-2 font-semibold">Use a negative number to deduct.</p>
-                <input required type="number" step="0.001" value={ledgerAdjustmentForm.amount} onChange={(e) => setLedgerAdjustmentForm({...ledgerAdjustmentForm, amount: e.target.value})} className="w-full px-4 py-2 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus:bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all duration-200 text-sm font-medium" placeholder="e.g. 50 or -10" />
+                <label className="block text-xs font-bold text-[#0B172B]/70 uppercase tracking-wider mb-3">Select Target System Ledger *</label>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { id: 'l-balance', label: 'LOOSE TEA BALANCE' },
+                    { id: 'l-orthodox', label: 'ORTHODOX BALANCE' },
+                    { id: 'l-cardamom', label: 'CARDAMOM BALANCE' },
+                    { id: 'l-cardamom-husk', label: 'CARDAMOM HUSK BALANCE' },
+                  ].map(ledger => (
+                    <button
+                      key={ledger.id}
+                      type="button"
+                      onClick={() => setLedgerAdjustmentForm({...ledgerAdjustmentForm, targetId: ledger.id})}
+                      className={`p-3 rounded-xl border text-left transition-all ${ledgerAdjustmentForm.targetId === ledger.id ? 'bg-amber-50 border-amber-500 ring-1 ring-amber-500' : 'bg-[#F0F5F9]/50 border-[#0B172B]/10 hover:border-amber-300'}`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className={`p-1 rounded-full flex items-center justify-center ${ledgerAdjustmentForm.targetId === ledger.id ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                          {ledgerAdjustmentForm.targetId === ledger.id ? <Check size={10} /> : <div className="w-2.5 h-2.5"></div>}
+                        </div>
+                        <span className={`text-xs font-bold leading-tight ${ledgerAdjustmentForm.targetId === ledger.id ? 'text-amber-800' : 'text-[#0B172B]/70'}`}>
+                          {ledger.label}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-[#0B172B]/50 ml-6 font-mono">
+                        Stock: {looseInventory.find(l => l.id === ledger.id)?.weight.toFixed(2) || '0.00'} kg
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-[#0B172B]/70 uppercase tracking-wider mb-1">Adjustment Amount (kg) *</label>
+                  <input required type="number" step="0.001" value={ledgerAdjustmentForm.amount} onChange={(e) => setLedgerAdjustmentForm({...ledgerAdjustmentForm, amount: e.target.value})} className="w-full px-4 py-3 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus:bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all duration-200 text-sm font-medium" placeholder="e.g. 50 or -10" />
+                  <p className="text-[10px] text-amber-600 mt-1.5 font-semibold leading-tight">Use a negative number to deduct. Current weight will be updated directly.</p>
+                </div>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-[#0B172B]/70 uppercase tracking-wider mb-1">Reason for Adjustment *</label>
-                <input required type="text" value={ledgerAdjustmentForm.reason} onChange={(e) => setLedgerAdjustmentForm({...ledgerAdjustmentForm, reason: e.target.value})} className="w-full px-4 py-2 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus:bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all duration-200 text-sm font-medium" placeholder="e.g. Received from farm" />
+                <input required type="text" value={ledgerAdjustmentForm.reason} onChange={(e) => setLedgerAdjustmentForm({...ledgerAdjustmentForm, reason: e.target.value})} className="w-full px-4 py-3 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus:bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all duration-200 text-sm font-medium" placeholder="e.g. Received from farm, Stock taking override" />
               </div>
               
-              <div className="pt-2 flex justify-end gap-3 border-t border-[#0B172B]/8 mt-2">
-                <button type="button" onClick={() => setShowLedgerAdjustment(false)} className="px-4 py-2 font-semibold text-[#0B172B]/60 hover:text-[#0B172B]">Cancel</button>
-                <button type="submit" className="bg-[#0B172B] hover:bg-amber-600 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 text-sm shadow-[0_5px_15px_rgba(11,23,43,0.1)] transition-colors">
+              <div className="pt-4 flex justify-end gap-3 border-t border-[#0B172B]/8 mt-2">
+                <button type="button" onClick={() => setShowLedgerAdjustment(false)} className="px-5 py-2.5 font-bold text-sm text-[#0B172B]/60 hover:text-[#0B172B] hover:bg-[#F0F5F9] rounded-xl transition-colors border border-transparent">Cancel</button>
+                <button type="submit" disabled={!ledgerAdjustmentForm.targetId} className="bg-[#0B172B] hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 text-sm shadow-md transition-colors">
                   <Check size={16} /> Apply Adjustment
                 </button>
               </div>

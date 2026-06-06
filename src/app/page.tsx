@@ -206,9 +206,23 @@ export default function App() {
         if (d.id === 'history') loadedHistory = d.data().items;
       });
 
-      if (loadedLoose && !(loadedLoose as LooseLot[]).some((i: LooseLot) => i.id === 'l-balance')) {
-        (loadedLoose as LooseLot[]).push({ id: 'l-balance', lotNumber: 'SYSTEM-LOOSE', grade: 'MIXED', mark: 'LOOSE TEA BALANCE', bags: 0, weightPerBag: 0, weight: 0, date: new Date().toISOString().split('T')[0], labels: ['SYSTEM LEDGER'] } as LooseLot);
-        setDoc(doc(db, 'artifacts', appId, 'globalData', 'loose'), { items: loadedLoose });
+      if (loadedLoose) {
+        let changed = false;
+        const ensureLedger = (id: string, lotNumber: string, mark: string, grade: string) => {
+          if (!(loadedLoose as LooseLot[]).some(i => i.id === id)) {
+            (loadedLoose as LooseLot[]).push({ id, lotNumber, grade, mark, bags: 0, weightPerBag: 0, weight: 0, date: new Date().toISOString().split('T')[0], labels: ['SYSTEM LEDGER'] } as LooseLot);
+            changed = true;
+          }
+        };
+
+        ensureLedger('l-balance', 'SYSTEM-LOOSE', 'LOOSE TEA BALANCE', 'MIXED');
+        ensureLedger('l-orthodox', 'ORTHODOX BALANCE', 'ORTHODOX', 'ORTHODOX');
+        ensureLedger('l-cardamom', 'CARDAMOM BALANCE', 'CARDAMOM', 'CARDAMOM');
+        ensureLedger('l-cardamom-husk', 'CARDAMOM HUSK BALANCE', 'CARDAMOM HUSK', 'HUSK');
+
+        if (changed) {
+          setDoc(doc(db, 'artifacts', appId, 'globalData', 'loose'), { items: loadedLoose });
+        }
       }
 
       if (!loadedCatalog) {
@@ -216,7 +230,12 @@ export default function App() {
         loadedCatalog = [];
       }
       if (!loadedLoose) {
-        const initialLoose = [{ id: 'l-balance', lotNumber: 'SYSTEM-LOOSE', grade: 'MIXED', mark: 'LOOSE TEA BALANCE', bags: 0, weightPerBag: 0, weight: 0, date: new Date().toISOString().split('T')[0], labels: ['SYSTEM LEDGER'] } as LooseLot];
+        const initialLoose = [
+          { id: 'l-balance', lotNumber: 'SYSTEM-LOOSE', grade: 'MIXED', mark: 'LOOSE TEA BALANCE', bags: 0, weightPerBag: 0, weight: 0, date: new Date().toISOString().split('T')[0], labels: ['SYSTEM LEDGER'] } as LooseLot,
+          { id: 'l-orthodox', lotNumber: 'ORTHODOX BALANCE', grade: 'ORTHODOX', mark: 'ORTHODOX', bags: 0, weightPerBag: 0, weight: 0, date: new Date().toISOString().split('T')[0], labels: ['SYSTEM LEDGER'] } as LooseLot,
+          { id: 'l-cardamom', lotNumber: 'CARDAMOM BALANCE', grade: 'CARDAMOM', mark: 'CARDAMOM', bags: 0, weightPerBag: 0, weight: 0, date: new Date().toISOString().split('T')[0], labels: ['SYSTEM LEDGER'] } as LooseLot,
+          { id: 'l-cardamom-husk', lotNumber: 'CARDAMOM HUSK BALANCE', grade: 'HUSK', mark: 'CARDAMOM HUSK', bags: 0, weightPerBag: 0, weight: 0, date: new Date().toISOString().split('T')[0], labels: ['SYSTEM LEDGER'] } as LooseLot
+        ];
         setDoc(doc(db, 'artifacts', appId, 'globalData', 'loose'), { items: initialLoose });
         loadedLoose = initialLoose;
       }
@@ -440,9 +459,11 @@ export default function App() {
     }
   };
 
-  const handleLedgerAdjustment = (amount: number, reason: string) => {
+  const handleLedgerAdjustment = (targetId: string, amount: number, reason: string) => {
+    let targetName = 'Unknown Lot';
     setLooseInventory(prev => prev.map(lot => {
-      if (lot.id === 'l-balance') {
+      if (lot.id === targetId) {
+        targetName = lot.id.startsWith('l-') ? lot.mark : `${lot.lotNumber} (${lot.mark})`;
         return { ...lot, weight: lot.weight + amount };
       }
       return lot;
@@ -451,12 +472,12 @@ export default function App() {
     const adjustmentHistory: HistoryRecord = {
       id: `HST-${Date.now()}`,
       type: 'LEDGER_ADJUSTMENT',
-      desc: `System Ledger adjusted by ${amount > 0 ? '+' : ''}${amount.toFixed(2)} kg. Reason: ${reason}`,
+      desc: `Ledger [${targetName}] adjusted by ${amount > 0 ? '+' : ''}${amount.toFixed(2)} kg. Reason: ${reason}`,
       timestamp: new Date().toISOString(),
-      details: { amount, reason }
+      details: { targetId, targetName, amount, reason }
     };
     setHistoryList(prev => [adjustmentHistory, ...prev]);
-    triggerToast(`System Ledger successfully adjusted by ${amount > 0 ? '+' : ''}${amount.toFixed(2)} kg.`);
+    triggerToast(`[${targetName}] successfully adjusted by ${amount > 0 ? '+' : ''}${amount.toFixed(2)} kg.`);
   };
 
   const handleRevertAndEditProcess = (blend: BlendProcess) => {
