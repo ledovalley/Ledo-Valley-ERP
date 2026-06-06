@@ -308,9 +308,9 @@ export default function App() {
 
   // 5. One-time wipe for history
   useEffect(() => {
-    if (isDataLoaded && localStorage.getItem('history_wiped_v1') !== 'true') {
+    if (isDataLoaded && localStorage.getItem('history_wiped_v2') !== 'true') {
       setHistoryList([]);
-      localStorage.setItem('history_wiped_v1', 'true');
+      localStorage.setItem('history_wiped_v2', 'true');
       console.log('History wiped per client request.');
     }
   }, [isDataLoaded]);
@@ -438,6 +438,25 @@ export default function App() {
       setPacketCatalog(prev => prev.filter(p => p.id !== productId));
       triggerToast("Product template deleted from catalog list successfully.");
     }
+  };
+
+  const handleLedgerAdjustment = (amount: number, reason: string) => {
+    setLooseInventory(prev => prev.map(lot => {
+      if (lot.id === 'l-balance') {
+        return { ...lot, weight: lot.weight + amount };
+      }
+      return lot;
+    }));
+
+    const adjustmentHistory: HistoryRecord = {
+      id: `HST-${Date.now()}`,
+      type: 'LEDGER_ADJUSTMENT',
+      desc: `System Ledger adjusted by ${amount > 0 ? '+' : ''}${amount.toFixed(2)} kg. Reason: ${reason}`,
+      timestamp: new Date().toISOString(),
+      details: { amount, reason }
+    };
+    setHistoryList(prev => [adjustmentHistory, ...prev]);
+    triggerToast(`System Ledger successfully adjusted by ${amount > 0 ? '+' : ''}${amount.toFixed(2)} kg.`);
   };
 
   const handleRevertAndEditProcess = (blend: BlendProcess) => {
@@ -725,6 +744,7 @@ export default function App() {
                 onUnlockRequest={() => triggerToast('No longer needed. Role-based access active.')}
                 onLockRequest={() => {}}
                 onAddCatalogProduct={handleAddCatalogProduct}
+                onLedgerAdjustment={handleLedgerAdjustment}
                 triggerToast={triggerToast}
               />
             )}

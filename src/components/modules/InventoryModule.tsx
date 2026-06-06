@@ -18,6 +18,7 @@ interface InventoryModuleProps {
   onUnlockRequest: () => void;
   onLockRequest: () => void;
   onAddCatalogProduct: (product: { name: string; unit: string; size: number; hsnCode?: string; gstRate?: number }) => void;
+  onLedgerAdjustment?: (amount: number, reason: string) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
@@ -35,6 +36,7 @@ export default function InventoryModule({
   onUnlockRequest,
   onLockRequest,
   onAddCatalogProduct,
+  onLedgerAdjustment,
   triggerToast
 }: InventoryModuleProps) {
   const [activeTab, setActiveTab] = useState<'loose'|'packet'>('loose');
@@ -54,6 +56,11 @@ export default function InventoryModule({
   const [showReceivePacket, setShowReceivePacket] = useState(false);
   const [packetForm, setPacketForm] = useState({
     productId: '', quantity: '', date: new Date().toISOString().split('T')[0]
+  });
+
+  const [showLedgerAdjustment, setShowLedgerAdjustment] = useState(false);
+  const [ledgerAdjustmentForm, setLedgerAdjustmentForm] = useState({
+    amount: '', reason: ''
   });
 
   const calculatedLooseTotalWeight = useMemo(() => {
@@ -113,6 +120,18 @@ export default function InventoryModule({
     }
     setPacketForm({ productId: '', quantity: '', date: new Date().toISOString().split('T')[0] });
     setShowReceivePacket(false);
+  };
+
+  const handleLedgerAdjustmentSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onLedgerAdjustment) return;
+    const amount = parseFloat(ledgerAdjustmentForm.amount);
+    if (!amount) return triggerToast('Please enter a valid amount', 'error');
+    if (!ledgerAdjustmentForm.reason.trim()) return triggerToast('Please provide a reason for this adjustment', 'error');
+    
+    onLedgerAdjustment(amount, ledgerAdjustmentForm.reason);
+    setLedgerAdjustmentForm({ amount: '', reason: '' });
+    setShowLedgerAdjustment(false);
   };
 
   const [editingLotId, setEditingLotId] = useState<string | null>(null);
@@ -427,6 +446,23 @@ export default function InventoryModule({
 
           {activeTab === 'loose' && (
             <>
+              <button 
+                onClick={() => {
+                  if (!isCatalogUnlocked) {
+                    triggerToast("Authentication required! Please unlock catalog first.", "error");
+                  } else {
+                    setShowLedgerAdjustment(true);
+                  }
+                }}
+                className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 ${
+                  isCatalogUnlocked 
+                    ? 'bg-amber-50 hover:bg-amber-100 text-amber-600 border border-amber-200' 
+                    : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                }`}
+              >
+                <Edit2 size={16} /> Adjust Ledger
+              </button>
+
               <select 
                 value={looseSortBy} 
                 onChange={e => setLooseSortBy(e.target.value)}
@@ -752,8 +788,20 @@ export default function InventoryModule({
                         <td className="p-4 text-center">
                           <div className="flex items-center justify-center gap-2">
                             {item.id === 'l-balance' ? (
-                              <div className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2 py-1 rounded tracking-wide">
-                                <Shield size={12} className="text-emerald-500" /> SYSTEM LEDGER
+                              <div className="flex flex-col gap-1 items-center">
+                                <div className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2 py-1 rounded tracking-wide">
+                                  <Shield size={12} className="text-emerald-500" /> SYSTEM LEDGER
+                                </div>
+                                {onLedgerAdjustment && (
+                                  <button 
+                                    onClick={() => setShowLedgerAdjustment(true)}
+                                    className={`px-2 py-1 rounded text-[10px] font-bold transition-all flex items-center gap-1 ${isCatalogUnlocked ? 'bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-200' : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'}`}
+                                    title={isCatalogUnlocked ? "Adjust Ledger Balance" : "Elevated access required"}
+                                    disabled={!isCatalogUnlocked}
+                                  >
+                                    <Edit2 size={10} /> Adjust Balance
+                                  </button>
+                                )}
                               </div>
                             ) : (
                               <>
@@ -977,6 +1025,40 @@ export default function InventoryModule({
                 <button onClick={saveEditingPacket} className="px-5 py-2.5 rounded-xl bg-[#0B172B] hover:bg-[#009965] text-white font-bold text-sm transition-all shadow-md">Save Changes</button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showLedgerAdjustment && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden transform transition-all animate-slide-up">
+            <div className="p-5 border-b border-[#0B172B]/8 bg-[#F0F5F9]/50 flex justify-between items-center">
+              <div>
+                <h3 className="text-lg font-bold text-[#0B172B] flex items-center gap-2"><Edit2 size={18} className="text-amber-500"/> Adjust System Ledger</h3>
+                <p className="text-xs text-[#0B172B]/55 mt-1">Directly adjust the loose tea balance.</p>
+              </div>
+              <button onClick={() => setShowLedgerAdjustment(false)} className="text-[#0B172B]/40 hover:text-[#0B172B] bg-[#F0F5F9] hover:bg-[#0B172B]/10 rounded-full p-1.5 transition-colors">✕</button>
+            </div>
+            
+            <form onSubmit={handleLedgerAdjustmentSubmit} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-[#0B172B]/70 uppercase tracking-wider mb-1">Adjustment Amount (kg) *</label>
+                <p className="text-[10px] text-amber-600 mb-2 font-semibold">Use a negative number to deduct.</p>
+                <input required type="number" step="0.001" value={ledgerAdjustmentForm.amount} onChange={(e) => setLedgerAdjustmentForm({...ledgerAdjustmentForm, amount: e.target.value})} className="w-full px-4 py-2 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus:bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all duration-200 text-sm font-medium" placeholder="e.g. 50 or -10" />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#0B172B]/70 uppercase tracking-wider mb-1">Reason for Adjustment *</label>
+                <input required type="text" value={ledgerAdjustmentForm.reason} onChange={(e) => setLedgerAdjustmentForm({...ledgerAdjustmentForm, reason: e.target.value})} className="w-full px-4 py-2 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus:bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all duration-200 text-sm font-medium" placeholder="e.g. Received from farm" />
+              </div>
+              
+              <div className="pt-2 flex justify-end gap-3 border-t border-[#0B172B]/8 mt-2">
+                <button type="button" onClick={() => setShowLedgerAdjustment(false)} className="px-4 py-2 font-semibold text-[#0B172B]/60 hover:text-[#0B172B]">Cancel</button>
+                <button type="submit" className="bg-[#0B172B] hover:bg-amber-600 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 text-sm shadow-[0_5px_15px_rgba(11,23,43,0.1)] transition-colors">
+                  <Check size={16} /> Apply Adjustment
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
