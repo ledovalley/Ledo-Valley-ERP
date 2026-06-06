@@ -658,7 +658,7 @@ export default function App() {
         </div>
       )}
 
-      {showBackupReminder && (
+      {showBackupReminder && systemUser.role === 'super_admin' && (
         <div className="fixed top-20 right-4 z-40 bg-white p-4 rounded-xl shadow-2xl border border-amber-200 animate-slide-in flex flex-col gap-3 max-w-[320px]">
           <div className="flex items-start gap-3">
             <div className="bg-amber-100 p-2 rounded-full shrink-0">
@@ -767,6 +767,7 @@ export default function App() {
                 onAddCatalogProduct={handleAddCatalogProduct}
                 onLedgerAdjustment={handleLedgerAdjustment}
                 triggerToast={triggerToast}
+                systemUser={systemUser}
               />
             )}
             {activeTab === 'blend' && (
@@ -782,6 +783,7 @@ export default function App() {
                 editingProcess={editingProcess}
                 setEditingProcess={setEditingProcess}
                 triggerToast={triggerToast} 
+                systemUser={systemUser}
               />
             )}
             {activeTab === 'process' && (
@@ -797,6 +799,7 @@ export default function App() {
                 setPrintBlend={setPrintBlend}
                 onRevertAndEdit={handleRevertAndEditProcess}
                 triggerToast={triggerToast} 
+                systemUser={systemUser}
               />
             )}
             {activeTab === 'history' && (

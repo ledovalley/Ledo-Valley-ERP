@@ -20,6 +20,7 @@ interface InventoryModuleProps {
   onAddCatalogProduct: (product: { name: string; unit: string; size: number; hsnCode?: string; gstRate?: number }) => void;
   onLedgerAdjustment?: (targetId: string, amount: number, reason: string) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
+  systemUser: any;
 }
 
 export default function InventoryModule({ 
@@ -37,7 +38,8 @@ export default function InventoryModule({
   onLockRequest,
   onAddCatalogProduct,
   onLedgerAdjustment,
-  triggerToast
+  triggerToast,
+  systemUser
 }: InventoryModuleProps) {
   const [activeTab, setActiveTab] = useState<'loose'|'packet'>('loose');
   const [searchTerm, setSearchTerm] = useState('');
@@ -493,15 +495,18 @@ export default function InventoryModule({
               >
                 <Trash2 size={16} /> Purge NIL Stock
               </button>
-
-              <button 
-                onClick={() => setShowReceiveLoose(true)}
-                className="px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all bg-[#0B172B] text-white hover:bg-[#009965] shadow-[0_10px_20px_rgba(11,23,43,0.15)] shrink-0"
-              >
-                <Plus size={16} /> Receive Raw Loose Tea
-              </button>
+              {systemUser.role !== 'user' && (
+                <button 
+                  onClick={() => setShowReceiveLoose(true)}
+                  className="px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all bg-[#0B172B] text-white hover:bg-[#009965] shadow-[0_10px_20px_rgba(11,23,43,0.15)] shrink-0"
+                >
+                  <Plus size={16} /> Receive Raw Loose Tea
+                </button>
+              )}
             </>
           )}
+
+
 
           {activeTab === 'packet' && (
             <>
@@ -523,12 +528,14 @@ export default function InventoryModule({
                 <Plus size={16} /> New Product Template
               </button>
 
-              <button 
-                onClick={() => setShowReceivePacket(true)}
-                className="px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all bg-[#0B172B] text-white hover:bg-[#009965] shadow-[0_10px_20px_rgba(11,23,43,0.15)] shrink-0"
-              >
-                <PackagePlus size={16} /> Receive Packaged Stock
-              </button>
+              {systemUser.role !== 'user' && (
+                <button 
+                  onClick={() => setShowReceivePacket(true)}
+                  className="px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all bg-[#0B172B] text-white hover:bg-[#009965] shadow-[0_10px_20px_rgba(11,23,43,0.15)] shrink-0"
+                >
+                  <PackagePlus size={16} /> Receive Packaged Stock
+                </button>
+              )}
             </>
           )}
         </div>
@@ -794,7 +801,7 @@ export default function InventoryModule({
                                   <Shield size={12} className="text-emerald-500" /> {item.mark}
                                 </div>
                               </div>
-                            ) : (
+                            ) : systemUser.role !== 'user' ? (
                               <>
                                 <button 
                                   onClick={() => startEditing(item)}
@@ -815,6 +822,8 @@ export default function InventoryModule({
                                   <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-1.5 rounded">Active</span>
                                 )}
                               </>
+                            ) : (
+                              <span className="text-[10px] font-semibold text-[#0B172B]/50 bg-[#F0F5F9] border border-[#0B172B]/10 px-2.5 py-1.5 rounded">View Only</span>
                             )}
                           </div>
                         </td>

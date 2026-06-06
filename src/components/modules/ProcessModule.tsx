@@ -17,6 +17,7 @@ interface ProcessModuleProps {
   setPrintBlend: (blend: BlendProcess | null) => void;
   onRevertAndEdit: (blend: BlendProcess) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
+  systemUser: any;
 }
 
 function SearchableProductSelect({ value, onChange, catalog }: { value: string, onChange: (val: string) => void, catalog: CatalogProduct[] }) {
@@ -92,7 +93,8 @@ export default function ProcessModule({
   setHistoryList, 
   setPrintBlend,
   onRevertAndEdit,
-  triggerToast 
+  triggerToast,
+  systemUser
 }: ProcessModuleProps) {
   const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
   const [activeFinalizingBlend, setActiveFinalizingBlend] = useState<BlendProcess | null>(null);
@@ -369,7 +371,7 @@ export default function ProcessModule({
           <h2 className="text-xl font-bold text-[#0B172B]">Under Process Blends</h2>
           <p className="text-xs text-[#0B172B]/55">Track and merge active batches, or final-pack them into your fixed packet master inventory catalogs.</p>
         </div>
-        {selectedForMerge.length > 1 && (
+        {selectedForMerge.length > 1 && systemUser.role !== 'user' && (
           <button onClick={handleMerge} className="bg-[#0B172B] hover:bg-[#009965] text-white px-4 py-2.5 rounded-xl flex items-center gap-2 font-semibold text-xs transition-all w-full sm:w-auto justify-center">
             <Combine size={16} /> Merge Selected Processes ({selectedForMerge.length})
           </button>
@@ -389,12 +391,14 @@ export default function ProcessModule({
               
               <div className="flex justify-between items-start mb-4 gap-2">
                 <div className="flex items-start gap-3">
-                  <input 
-                    type="checkbox" 
-                    checked={selectedForMerge.includes(blend.id)}
-                    onChange={() => toggleMergeSelect(blend.id)}
-                    className="mt-1 w-4.5 h-4.5 text-[#009965] rounded cursor-pointer border-[#0B172B]/20 focus:ring-[#009965]"
-                  />
+                  {systemUser.role !== 'user' && (
+                    <input 
+                      type="checkbox" 
+                      checked={selectedForMerge.includes(blend.id)}
+                      onChange={() => toggleMergeSelect(blend.id)}
+                      className="mt-1 w-4.5 h-4.5 text-[#009965] rounded cursor-pointer border-[#0B172B]/20 focus:ring-[#009965]"
+                    />
+                  )}
                   <div>
                     <h3 className="font-bold text-[#0B172B] text-base">{blend.blendName}</h3>
                     <p className="text-xs text-[#0B172B]/40 font-mono mt-0.5">ID: {blend.id} {blend.batchNo && `| Batch: ${blend.batchNo}`}</p>
@@ -423,28 +427,30 @@ export default function ProcessModule({
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 flex-wrap">
-                <button 
-                  onClick={() => onRevertAndEdit(blend)}
-                  className="bg-white text-blue-600 border border-[#0B172B]/10 hover:bg-blue-50 px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
-                  title="Revert & Edit Blend"
-                >
-                  <Edit2 size={14} /> Edit
-                </button>
-                <button 
-                  onClick={() => setPrintBlend(blend)}
-                  className="bg-white text-[#0B172B]/70 border border-[#0B172B]/10 hover:bg-[#F0F5F9] hover:text-[#009965] px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
-                  title="Print Blend Ticket"
-                >
-                  <Printer size={14} /> Print
-                </button>
-                <button 
-                  onClick={() => initFinalizeFlow(blend)}
-                  className="bg-white text-[#0B172B]/70 border border-[#0B172B]/10 hover:bg-[#F0F5F9] px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
-                >
-                  <Check size={14} /> Finalize to Packet Stock
-                </button>
-              </div>
+              {systemUser.role !== 'user' && (
+                <div className="flex justify-end gap-2 flex-wrap">
+                  <button 
+                    onClick={() => onRevertAndEdit(blend)}
+                    className="bg-white text-blue-600 border border-[#0B172B]/10 hover:bg-blue-50 px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                    title="Revert & Edit Blend"
+                  >
+                    <Edit2 size={14} /> Edit
+                  </button>
+                  <button 
+                    onClick={() => setPrintBlend(blend)}
+                    className="bg-white text-[#0B172B]/70 border border-[#0B172B]/10 hover:bg-[#F0F5F9] hover:text-[#009965] px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                    title="Print Blend Ticket"
+                  >
+                    <Printer size={14} /> Print
+                  </button>
+                  <button 
+                    onClick={() => initFinalizeFlow(blend)}
+                    className="bg-white text-[#0B172B]/70 border border-[#0B172B]/10 hover:bg-[#F0F5F9] px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                  >
+                    <Check size={14} /> Finalize to Packet Stock
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>

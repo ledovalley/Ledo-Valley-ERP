@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Printer, Search, ArrowLeft } from 'lucide-react';
+import { Printer, Search, ArrowLeft, Lock } from 'lucide-react';
 import { LooseLot, BlendProcess, HistoryRecord } from '@/types';
 
 interface BlendModuleProps {
@@ -11,9 +11,10 @@ interface BlendModuleProps {
   setHistoryList: (val: any) => void;
   setActiveTab: (tab: string) => void;
   setPrintBlend: (blend: BlendProcess | null) => void;
-  editingProcess?: BlendProcess | null;
-  setEditingProcess?: (val: BlendProcess | null) => void;
+  editingProcess: BlendProcess | null;
+  setEditingProcess: (p: BlendProcess | null) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
+  systemUser: any;
 }
 
 export default function BlendModule({ 
@@ -27,7 +28,8 @@ export default function BlendModule({
   setPrintBlend, 
   editingProcess,
   setEditingProcess,
-  triggerToast 
+  triggerToast,
+  systemUser
 }: BlendModuleProps) {
   const [blendName, setBlendName] = useState('');
   const [batchNo, setBatchNo] = useState('');
@@ -220,9 +222,11 @@ export default function BlendModule({
           <h2 className="text-xl font-bold text-[#0B172B]">Create New Blend Sheet</h2>
           <p className="text-xs text-[#0B172B]/55">Select available loose warehouse lots & assign bags for the blend sheet.</p>
         </div>
-        <button onClick={handleSubmitBlend} className="bg-[#0B172B] hover:bg-[#009965] shadow-[0_10px_20px_rgba(11,23,43,0.15)] text-white px-5 py-2.5 rounded-xl flex items-center gap-2 font-semibold text-xs self-stretch sm:self-auto justify-center transition-colors">
-          <Printer size={16} /> Submit & Print Blend Sheet
-        </button>
+        {systemUser.role !== 'user' && (
+          <button onClick={handleSubmitBlend} className="bg-[#0B172B] hover:bg-[#009965] shadow-[0_10px_20px_rgba(11,23,43,0.15)] text-white px-5 py-2.5 rounded-xl flex items-center gap-2 font-semibold text-xs self-stretch sm:self-auto justify-center transition-colors">
+            <Printer size={16} /> Submit & Print Blend Sheet
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
@@ -279,12 +283,16 @@ export default function BlendModule({
               {filteredInv.map(lot => (
                 <tr key={lot.id} className={`group hover:bg-[#F0F5F9]/50 transition-all ${selectedLots[lot.id] !== undefined ? 'bg-[#F0F5F9]/50' : ''}`}>
                   <td className="p-3 text-center">
-                    <input 
-                      type="checkbox" 
-                      className="w-4 h-4 text-[#009965] rounded border-[#0B172B]/20 focus:ring-[#009965] cursor-pointer animate-none"
-                      checked={selectedLots[lot.id] !== undefined}
-                      onChange={(e) => handleLotSelect(lot.id, e.target.checked)}
-                    />
+                    {systemUser.role !== 'user' ? (
+                      <input 
+                        type="checkbox" 
+                        className="w-4 h-4 text-[#009965] rounded border-[#0B172B]/20 focus:ring-[#009965] cursor-pointer animate-none"
+                        checked={selectedLots[lot.id] !== undefined}
+                        onChange={(e) => handleLotSelect(lot.id, e.target.checked)}
+                      />
+                    ) : (
+                      <Lock size={14} className="text-[#0B172B]/20 mx-auto" />
+                    )}
                   </td>
                   <td className="p-3">
                     <div className="font-bold text-[#0B172B] text-sm">{lot.lotNumber}</div>

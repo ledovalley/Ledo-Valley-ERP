@@ -142,21 +142,23 @@ export default function Sidebar({
           </div>
 
           <div className="px-4 pb-4 mt-auto">
-            <button
-              onClick={() => setShowBackupModal(true)}
-              className="w-full rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 p-3 flex items-center justify-between transition-colors shadow-sm"
-            >
-              <div className="flex items-center gap-3 text-[#F0F5F9]">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#0B172B]/50 border border-white/10">
-                  <Database size={16} />
+            {systemUser.role === 'super_admin' && (
+              <button
+                onClick={() => setShowBackupModal(true)}
+                className="w-full rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 p-3 flex items-center justify-between transition-colors shadow-sm"
+              >
+                <div className="flex items-center gap-3 text-[#F0F5F9]">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#0B172B]/50 border border-white/10">
+                    <Database size={16} />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-[13px] font-semibold">Database Backups</p>
+                    <p className="text-[11px] text-[#F0F5F9]/60">Automated Daily Sync</p>
+                  </div>
                 </div>
-                <div className="text-left">
-                  <p className="text-[13px] font-semibold">Database Backups</p>
-                  <p className="text-[11px] text-[#F0F5F9]/60">Automated Daily Sync</p>
-                </div>
-              </div>
-              <ChevronRight size={14} className="text-[#F0F5F9]/40" />
-            </button>
+                <ChevronRight size={14} className="text-[#F0F5F9]/40" />
+              </button>
+            )}
           </div>
 
           <div className="border-t border-white/10 p-4 pt-0">
