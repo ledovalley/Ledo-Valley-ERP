@@ -63,10 +63,11 @@ export default function BlendModule({
   const uniqueGrades = useMemo(() => [...new Set(looseInventory.map(i => i.grade))].filter(Boolean).sort(), [looseInventory]);
 
   const filteredInv = useMemo(() => {
-    return looseInventory.filter(i => {
-      // Hide empty lots, but keep l-balance if it has weight
-      if (i.bags <= 0 && i.id !== 'l-balance') return false;
-      if (i.id === 'l-balance' && i.weight <= 0) return false; 
+    let result = looseInventory.filter(i => {
+      // Hide empty lots, but keep system ledgers if they have weight
+      const isSystem = i.id.startsWith('l-');
+      if (i.bags <= 0 && !isSystem) return false;
+      if (isSystem && i.weight <= 0) return false; 
 
       const matchesSearch = !searchTerm || 
         i.lotNumber.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -77,6 +78,16 @@ export default function BlendModule({
 
       return matchesSearch && matchesGrade;
     });
+
+    result.sort((a, b) => {
+      const aIsSystem = a.id.startsWith('l-');
+      const bIsSystem = b.id.startsWith('l-');
+      if (aIsSystem && !bIsSystem) return -1;
+      if (!aIsSystem && bIsSystem) return 1;
+      return 0;
+    });
+
+    return result;
   }, [looseInventory, searchTerm, filterGrade]);
 
   const handleLotSelect = (lotId: string, checked: boolean) => {
@@ -84,7 +95,7 @@ export default function BlendModule({
     if (checked) {
       const lot = looseInventory.find(i => i.id === lotId);
       if (lot) {
-        newSelected[lotId] = lot.id === 'l-balance' ? lot.weight : lot.bags; 
+        newSelected[lotId] = lot.id.startsWith('l-') ? lot.weight : lot.bags; 
       }
     } else {
       delete newSelected[lotId];
@@ -93,7 +104,7 @@ export default function BlendModule({
   };
 
   const handleInputQtyChange = (lotId: string, valInput: string) => {
-    if (lotId === 'l-balance') {
+    if (lotId.startsWith('l-')) {
       setSelectedLots({ ...selectedLots, [lotId]: parseFloat(valInput) || 0 });
     } else {
       setSelectedLots({ ...selectedLots, [lotId]: parseInt(valInput) || 0 });
@@ -101,7 +112,7 @@ export default function BlendModule({
   };
 
   const getLotCalculatedWeight = (lot: LooseLot, qtyToUse: number) => {
-    if (lot.id === 'l-balance') return parseFloat(qtyToUse.toString()) || 0;
+    if (lot.id.startsWith('l-')) return parseFloat(qtyToUse.toString()) || 0;
     const wtPerBag = parseFloat(lot.weightPerBag.toString()) || 0;
     return qtyToUse * wtPerBag;
   };
@@ -309,13 +320,13 @@ export default function BlendModule({
                     </div>
                   </td>
                   <td className="p-3 text-right">
-                    {lot.id === 'l-balance' ? (
+                    {lot.id.startsWith('l-') ? (
                       <div className="font-bold text-[#0B172B]/80">System Ledger</div>
                     ) : (
                       <div className="font-bold text-[#0B172B]/80">{lot.bags} Bags</div>
                     )}
                     <div className="text-[10px] text-[#0B172B]/40">
-                      {lot.id === 'l-balance' 
+                      {lot.id.startsWith('l-') 
                         ? `(${lot.weight.toFixed(2)} kg Available)` 
                         : `(${lot.weight.toFixed(1)} kg • ${lot.weightPerBag} kg/bag)`}
                     </div>
@@ -325,16 +336,16 @@ export default function BlendModule({
                       <div className="flex flex-col items-end">
                         <input 
                           type="number" 
-                          max={lot.id === 'l-balance' ? lot.weight : lot.bags}
-                          min={lot.id === 'l-balance' ? 0.01 : 1}
-                          step={lot.id === 'l-balance' ? 0.01 : 1}
+                          max={lot.id.startsWith('l-') ? lot.weight : lot.bags}
+                          min={lot.id.startsWith('l-') ? 0.01 : 1}
+                          step={lot.id.startsWith('l-') ? 0.01 : 1}
                           value={selectedLots[lot.id] || ''}
                           onChange={(e) => handleInputQtyChange(lot.id, e.target.value)}
                           className="w-full px-3 py-2 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965] outline-none text-right font-bold text-[#0B172B] bg-white shadow-sm"
-                          placeholder={lot.id === 'l-balance' ? 'Kg' : 'Bags'}
+                          placeholder={lot.id.startsWith('l-') ? 'Kg' : 'Bags'}
                         />
                         <span className="text-[10px] text-[#004825] mt-0.5 font-bold font-mono">
-                          {lot.id === 'l-balance' ? 'kg' : `= ${getLotCalculatedWeight(lot, selectedLots[lot.id]).toFixed(1)} kg`}
+                          {lot.id.startsWith('l-') ? 'kg' : `= ${getLotCalculatedWeight(lot, selectedLots[lot.id]).toFixed(1)} kg`}
                         </span>
                       </div>
                     )}

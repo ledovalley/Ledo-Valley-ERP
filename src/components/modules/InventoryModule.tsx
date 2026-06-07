@@ -255,6 +255,14 @@ export default function InventoryModule({
       result.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     }
 
+    result.sort((a, b) => {
+      const aIsSystem = a.id.startsWith('l-');
+      const bIsSystem = b.id.startsWith('l-');
+      if (aIsSystem && !bIsSystem) return -1;
+      if (!aIsSystem && bIsSystem) return 1;
+      return 0;
+    });
+
     return result;
   }, [looseInventory, searchTerm, looseSortBy]);
 
