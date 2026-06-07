@@ -19,7 +19,7 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-export default function UserManagementModule({ triggerToast, historyList }: { triggerToast: any, historyList: HistoryRecord[] }) {
+export default function UserManagementModule({ triggerToast, historyList = [] }: { triggerToast: any, historyList: HistoryRecord[] }) {
   const [users, setUsers] = useState<SystemUser[]>([]);
   const [name, setName] = useState('');
   const [number, setNumber] = useState('');

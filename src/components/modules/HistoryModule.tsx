@@ -10,7 +10,7 @@ interface HistoryModuleProps {
   onUndoFinalization?: (record: HistoryRecord) => void;
 }
 
-export default function HistoryModule({ historyList, systemUser, onUndoFinalization }: HistoryModuleProps) {
+export default function HistoryModule({ historyList = [], systemUser, onUndoFinalization }: HistoryModuleProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [userFilter, setUserFilter] = useState('');
   const [actionFilter, setActionFilter] = useState('');
@@ -57,7 +57,7 @@ export default function HistoryModule({ historyList, systemUser, onUndoFinalizat
       const details = h.details;
       if (!details) return;
       
-      const inputStr = details.lotsUsed.map((l: any) => `${l.lotNumber} [${l.mark}] (${l.weightUsed.toFixed(2)}kg)`).join('; ');
+      const inputStr = details.lotsUsed ? details.lotsUsed.map((l: any) => `${l.lotNumber} [${l.mark}] (${l.weightUsed.toFixed(2)}kg)`).join('; ') : '';
       const outputStr = details.producedItems ? details.producedItems.map((p: any) => `${p.productName} x${p.quantity} (${p.totalWeight.toFixed(2)}kg)`).join('; ') : '';
       const variance = details.totalQuantity - (details.totalOutputQuantity || 0);
       
@@ -86,7 +86,7 @@ export default function HistoryModule({ historyList, systemUser, onUndoFinalizat
       const details = h.details;
       if (!details) return [h.id, h.desc, '', '', '', '', ''];
       
-      const inputStr = details.lotsUsed.map((l: any) => `${l.lotNumber} (${l.weightUsed.toFixed(1)}kg)`).join(', ');
+      const inputStr = details.lotsUsed ? details.lotsUsed.map((l: any) => `${l.lotNumber} (${l.weightUsed.toFixed(1)}kg)`).join(', ') : '';
       const outputStr = details.producedItems ? details.producedItems.map((p: any) => `${p.productName} x${p.quantity}`).join(', ') : '';
       const variance = details.totalQuantity - (details.totalOutputQuantity || 0);
 
@@ -190,7 +190,7 @@ export default function HistoryModule({ historyList, systemUser, onUndoFinalizat
               <div className="w-full bg-[#F0F5F9]/50 p-4 rounded-xl border border-[#0B172B]/8">
                 <span className="text-[10px] font-black tracking-widest text-[#0B172B]/40 uppercase block mb-3">Origin Raw Loose Lots</span>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {traceModalData.details.lotsUsed.map((l: any, i: number) => (
+                  {traceModalData.details.lotsUsed && traceModalData.details.lotsUsed.map((l: any, i: number) => (
                     <div key={i} className="flex flex-col text-sm border border-[#0B172B]/8 bg-white p-3 rounded-lg shadow-sm">
                       <span className="font-bold text-[#0B172B]">{l.lotNumber}</span>
                       <span className="text-xs text-[#0B172B]/55 mb-2">{l.mark}</span>
@@ -281,7 +281,7 @@ export default function HistoryModule({ historyList, systemUser, onUndoFinalizat
               filteredHistory.map(record => {
                 const details = record.details;
                 if (!details) return null;
-                const processVariance = details.totalQuantity - (details.totalOutputQuantity || 0);
+                const processVariance = details.totalQuantity !== undefined ? details.totalQuantity - (details.totalOutputQuantity || 0) : 0;
                 
                 return (
                   <tr key={record.id} className="group hover:bg-[#F0F5F9]/50 transition-all border-b border-[#0B172B]/5">
@@ -296,13 +296,13 @@ export default function HistoryModule({ historyList, systemUser, onUndoFinalizat
                     </td>
                     
                     <td className="p-4 align-top text-xs text-[#0B172B]/70 font-mono leading-relaxed">
-                      <div>Created: {details.date}</div>
+                      {details.date && <div>Created: {details.date}</div>}
                       <div className="text-[#009965] font-semibold mt-1">Packout: {details.completedDate}</div>
                     </td>
 
                     <td className="p-4 align-top">
                       <div className="space-y-1">
-                        {details.lotsUsed.map((l: any, i: number) => (
+                        {details.lotsUsed && details.lotsUsed.map((l: any, i: number) => (
                           <div key={i} className="text-xs text-[#0B172B]/70 font-mono">
                             • {l.lotNumber} ({l.mark}): 
                             {l.bagsUsed === '-' ? (
@@ -313,9 +313,11 @@ export default function HistoryModule({ historyList, systemUser, onUndoFinalizat
                           </div>
                         ))}
                       </div>
-                      <div className="text-xs font-bold text-[#0B172B] mt-2 pt-1 border-t border-[#0B172B]/8 font-mono">
-                        Total Input: {details.totalQuantity.toFixed(1)} kg
-                      </div>
+                      {details.totalQuantity !== undefined && (
+                        <div className="text-xs font-bold text-[#0B172B] mt-2 pt-1 border-t border-[#0B172B]/8 font-mono">
+                          Total Input: {details.totalQuantity.toFixed(1)} kg
+                        </div>
+                      )}
                     </td>
 
                     <td className="p-4 align-top bg-[#FFFEE2]/20 border-l border-[#0B172B]/8">
