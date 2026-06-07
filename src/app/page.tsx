@@ -481,25 +481,9 @@ export default function App() {
   };
 
   const handleRevertAndEditProcess = (blend: BlendProcess) => {
-    // 1. Return the lots to loose inventory
-    setLooseInventory(prev => prev.map(lot => {
-      const usedLot = blend.lotsUsed.find(l => l.lotId === lot.id);
-      if (usedLot) {
-        if (lot.id === 'l-balance') {
-          return { ...lot, weight: lot.weight + usedLot.weightUsed };
-        } else {
-          return { 
-            ...lot, 
-            bags: lot.bags + (usedLot.bagsUsed === '-' ? 0 : parseFloat(usedLot.bagsUsed as string) || 0),
-            weight: lot.weight + usedLot.weightUsed 
-          };
-        }
-      }
-      return lot;
-    }));
-
-    // 2. Remove from under process
-    setUnderProcess(prev => prev.filter(b => b.id !== blend.id));
+    // We do NOT return lots to inventory or remove from underProcess yet.
+    // We only set the editing process and switch tabs. 
+    // The actual replacement happens safely upon "Submit & Print" in BlendModule.
 
     // 3. Set to editing mode and change tab
     setEditingProcess(blend);
