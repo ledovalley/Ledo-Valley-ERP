@@ -115,45 +115,51 @@ export default function App() {
 
   // --- Cloud Synchronized Setters ---
   const setPacketCatalog = async (newValOrUpdater: CatalogProduct[] | ((prev: CatalogProduct[]) => CatalogProduct[])) => {
-    const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(localPacketCatalog) : newValOrUpdater;
-    setLocalPacketCatalog(newVal); 
-    if (auth && user) {
-      try { await setDoc(doc(db, 'artifacts', appId, 'globalData', 'catalog'), { items: newVal }); } catch (e) { console.error(e); }
-    }
+    setLocalPacketCatalog(prev => {
+      const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      if (auth && user) {
+        setDoc(doc(db, 'artifacts', appId, 'globalData', 'catalog'), { items: newVal }).catch(console.error);
+      }
+      return newVal;
+    });
   };
 
   const setLooseInventory = async (newValOrUpdater: LooseLot[] | ((prev: LooseLot[]) => LooseLot[])) => {
-    const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(localLooseInventory) : newValOrUpdater;
-    setLocalLooseInventory(newVal);
-    if (auth && user) {
-      try { await setDoc(doc(db, 'artifacts', appId, 'globalData', 'loose'), { items: newVal }); } catch (e) { console.error(e); }
-    }
+    setLocalLooseInventory(prev => {
+      const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      if (auth && user) {
+        setDoc(doc(db, 'artifacts', appId, 'globalData', 'loose'), { items: newVal }).catch(console.error);
+      }
+      return newVal;
+    });
   };
 
   const setUnderProcess = async (newValOrUpdater: BlendProcess[] | ((prev: BlendProcess[]) => BlendProcess[])) => {
-    const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(localUnderProcess) : newValOrUpdater;
-    setLocalUnderProcess(newVal);
-    if (auth && user) {
-      try { await setDoc(doc(db, 'artifacts', appId, 'globalData', 'process'), { items: newVal }); } catch (e) { console.error(e); }
-    }
+    setLocalUnderProcess(prev => {
+      const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      if (auth && user) {
+        setDoc(doc(db, 'artifacts', appId, 'globalData', 'process'), { items: newVal }).catch(console.error);
+      }
+      return newVal;
+    });
   };
 
   const setHistoryList = async (newValOrUpdater: HistoryRecord[] | ((prev: HistoryRecord[]) => HistoryRecord[])) => {
-    const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(localHistoryList) : newValOrUpdater;
-    
-    // Auto-inject user details into new history records
-    const enrichedVal = typeof newValOrUpdater === 'function' ? newVal.map(record => {
-      // If it's a new record (no userId yet), tag it
-      if (!record.userId && systemUser) {
-        return { ...record, userId: systemUser.userId, userName: systemUser.name };
-      }
-      return record;
-    }) : newVal;
+    setLocalHistoryList(prev => {
+      const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      
+      const enrichedVal = typeof newValOrUpdater === 'function' ? newVal.map(record => {
+        if (!record.userId && systemUser) {
+          return { ...record, userId: systemUser.userId, userName: systemUser.name };
+        }
+        return record;
+      }) : newVal;
 
-    setLocalHistoryList(enrichedVal);
-    if (auth && user) {
-      try { await setDoc(doc(db, 'artifacts', appId, 'globalData', 'history'), { items: enrichedVal }); } catch (e) { console.error(e); }
-    }
+      if (auth && user) {
+        setDoc(doc(db, 'artifacts', appId, 'globalData', 'history'), { items: enrichedVal }).catch(console.error);
+      }
+      return enrichedVal;
+    });
   };
 
   // 1. Firebase Authentication Hook
@@ -325,14 +331,7 @@ export default function App() {
     }
   }, [printBlend]);
 
-  // 5. One-time wipe for history
-  useEffect(() => {
-    if (isDataLoaded && localStorage.getItem('history_wiped_v2') !== 'true') {
-      setHistoryList([]);
-      localStorage.setItem('history_wiped_v2', 'true');
-      console.log('History wiped per client request.');
-    }
-  }, [isDataLoaded]);
+
 
   // Handle Export Full Backup JSON
   const handleExportFullBackup = () => {
