@@ -162,9 +162,32 @@ export default function BlendModule({
       }
     }
 
-    const updatedLoose = looseInventory.map(lot => {
+    const lotsUsedArray = Object.keys(selectedLots).map(id => {
+      const l = looseInventory.find(i => i.id === id);
+      if (!l) return null;
+      const qtyUsed = selectedLots[id];
+      return { 
+        lotId: id, 
+        lotNumber: l.lotNumber, 
+        mark: l.mark, 
+        bagsUsed: id.startsWith('l-') ? '-' : qtyUsed,
+        weightUsed: getLotCalculatedWeight(l, qtyUsed)
+      };
+    }).filter(Boolean) as BlendProcess['lotsUsed'];
+
+    const newBlend: BlendProcess = {
+      id: 'BLD-' + Date.now().toString().slice(-6),
+      blendName,
+      batchNo: finalBatchNo,
+      totalQuantity: totalBlendWeight,
+      status: 'PENDING',
+      date: new Date().toISOString().split('T')[0],
+      lotsUsed: lotsUsedArray
+    };
+
+    setLooseInventory(prev => prev.map(lot => {
       if (selectedLots[lot.id]) {
-        if (lot.id === 'l-balance') {
+        if (lot.id.startsWith('l-')) {
           const weightToDeduct = selectedLots[lot.id];
           return { ...lot, weight: Math.max(0, lot.weight - weightToDeduct) };
         } else {
@@ -178,33 +201,9 @@ export default function BlendModule({
         }
       }
       return lot;
-    });
-
-    const lotsUsedArray = Object.keys(selectedLots).map(id => {
-      const l = looseInventory.find(i => i.id === id);
-      if (!l) return null;
-      const qtyUsed = selectedLots[id];
-      return { 
-        lotId: id, 
-        lotNumber: l.lotNumber, 
-        mark: l.mark, 
-        bagsUsed: id === 'l-balance' ? '-' : qtyUsed,
-        weightUsed: getLotCalculatedWeight(l, qtyUsed)
-      };
-    }).filter(Boolean) as BlendProcess['lotsUsed'];
-
-    const newBlend: BlendProcess = {
-      id: 'BLD-' + Date.now().toString().slice(-6),
-      blendName,
-      batchNo: batchNo,
-      totalQuantity: totalBlendWeight,
-      status: 'PENDING',
-      date: new Date().toISOString().split('T')[0],
-      lotsUsed: lotsUsedArray
-    };
-
-    setLooseInventory(updatedLoose);
-    setUnderProcess([...underProcess, newBlend]);
+    }));
+    
+    setUnderProcess(prev => [newBlend, ...prev]);
     
     // Log history of creation
     const creationHistory = {
@@ -217,7 +216,9 @@ export default function BlendModule({
     setHistoryList((prev: any) => [creationHistory, ...prev]);
 
     triggerToast(`Blend [${newBlend.id}] created and sent to printer.`);
-    setPrintBlend(newBlend); 
+    setPrintBlend(newBlend);
+    // Explicitly navigate user to process tab to see the new blend
+    setActiveTab('process');
   };
 
   return (

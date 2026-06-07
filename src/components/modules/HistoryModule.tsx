@@ -59,9 +59,9 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
       
       const inputStr = details.lotsUsed ? details.lotsUsed.map((l: any) => `${l.lotNumber} [${l.mark}] (${l.weightUsed.toFixed(2)}kg)`).join('; ') : '';
       const outputStr = details.producedItems ? details.producedItems.map((p: any) => `${p.productName} x${p.quantity} (${p.totalWeight.toFixed(2)}kg)`).join('; ') : '';
-      const variance = details.totalQuantity - (details.totalOutputQuantity || 0);
+      const variance = details.totalQuantity !== undefined ? details.totalQuantity - (details.totalOutputQuantity || 0) : 0;
       
-      csv += `"${h.id}","${details.blendName}","${details.batchNo || ''}","${details.date}","${details.completedDate}","${details.totalQuantity.toFixed(2)}","${(details.totalOutputQuantity || 0).toFixed(2)}","${variance.toFixed(2)}","${(details.returnedLooseWeight || 0).toFixed(2)}","${inputStr}","${outputStr}"\n`;
+      csv += `"${h.id}","${details.blendName || h.desc}","${details.batchNo || ''}","${details.date || h.timestamp.split('T')[0]}","${details.completedDate || ''}","${details.totalQuantity !== undefined ? details.totalQuantity.toFixed(2) : '-'}","${(details.totalOutputQuantity || 0).toFixed(2)}","${variance.toFixed(2)}","${(details.returnedLooseWeight || 0).toFixed(2)}","${inputStr}","${outputStr}"\n`;
     });
     
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -88,13 +88,13 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
       
       const inputStr = details.lotsUsed ? details.lotsUsed.map((l: any) => `${l.lotNumber} (${l.weightUsed.toFixed(1)}kg)`).join(', ') : '';
       const outputStr = details.producedItems ? details.producedItems.map((p: any) => `${p.productName} x${p.quantity}`).join(', ') : '';
-      const variance = details.totalQuantity - (details.totalOutputQuantity || 0);
+      const variance = details.totalQuantity !== undefined ? details.totalQuantity - (details.totalOutputQuantity || 0) : 0;
 
       return [
-        details.blendName || h.type,
+        details.blendName || h.desc,
         details.batchNo || '-',
-        details.date,
-        details.totalQuantity.toFixed(2),
+        details.date || h.timestamp.split('T')[0],
+        details.totalQuantity !== undefined ? details.totalQuantity.toFixed(2) : '-',
         (details.totalOutputQuantity || 0).toFixed(2),
         variance.toFixed(2),
         inputStr,
@@ -286,37 +286,65 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                 return (
                   <tr key={record.id} className="group hover:bg-[#F0F5F9]/50 transition-all border-b border-[#0B172B]/5">
                     <td className="p-4 align-top">
-                      <div className="font-bold text-[#0B172B]">{details.blendName}</div>
+                      {record.type === 'LEDGER_ADJUSTMENT' ? (
+                        <div className="font-bold text-[#0B172B]">Manual Adjustment: {details.targetName}</div>
+                      ) : (
+                        <div className="font-bold text-[#0B172B]">{details.blendName || 'Unknown Event'}</div>
+                      )}
                       <div className="text-xs text-[#0B172B]/40 font-mono mt-0.5">ID: {record.id}</div>
                       {details.batchNo && (
                         <div className="text-[10px] inline-block bg-[#F0F5F9] text-[#0B172B]/55 px-1.5 py-0.5 rounded mt-1 font-mono font-bold uppercase border border-[#0B172B]/10">
                           Batch: {details.batchNo}
                         </div>
                       )}
+                      <div className="mt-2">
+                        <span className="text-[10px] bg-[#009965]/10 text-[#009965] border border-[#009965]/20 px-2 py-0.5 rounded font-bold uppercase">
+                          {record.type}
+                        </span>
+                      </div>
                     </td>
                     
                     <td className="p-4 align-top text-xs text-[#0B172B]/70 font-mono leading-relaxed">
-                      {details.date && <div>Created: {details.date}</div>}
-                      <div className="text-[#009965] font-semibold mt-1">Packout: {details.completedDate}</div>
+                      {record.type === 'LEDGER_ADJUSTMENT' ? (
+                        <div>Adjusted: {record.timestamp?.split('T')[0] || details.date}</div>
+                      ) : (
+                        <>
+                          {details.date && <div>Created: {details.date}</div>}
+                          {details.completedDate && <div className="text-[#009965] font-semibold mt-1">Packout: {details.completedDate}</div>}
+                        </>
+                      )}
                     </td>
 
                     <td className="p-4 align-top">
-                      <div className="space-y-1">
-                        {details.lotsUsed && details.lotsUsed.map((l: any, i: number) => (
-                          <div key={i} className="text-xs text-[#0B172B]/70 font-mono">
-                            • {l.lotNumber} ({l.mark}): 
-                            {l.bagsUsed === '-' ? (
-                              <> <span className="font-semibold text-[#0B172B]">System Balance</span> ({l.weightUsed.toFixed(1)}kg)</>
-                            ) : (
-                              <> <span className="font-semibold text-[#0B172B]">{l.bagsUsed} bags</span> ({l.weightUsed.toFixed(1)}kg)</>
-                            )}
+                      {record.type === 'LEDGER_ADJUSTMENT' ? (
+                        <div className="space-y-1">
+                          <div className="text-xs text-[#0B172B]/70 font-mono">
+                            • Variance/Correction: <span className={details.amount > 0 ? "text-[#009965] font-bold" : "text-rose-500 font-bold"}>{details.amount > 0 ? '+' : ''}{details.amount?.toFixed(2)} kg</span>
                           </div>
-                        ))}
-                      </div>
-                      {details.totalQuantity !== undefined && (
-                        <div className="text-xs font-bold text-[#0B172B] mt-2 pt-1 border-t border-[#0B172B]/8 font-mono">
-                          Total Input: {details.totalQuantity.toFixed(1)} kg
+                          <div className="text-xs text-[#0B172B] mt-2 italic font-sans border-t border-[#0B172B]/8 pt-1">
+                            Reason: {details.reason}
+                          </div>
                         </div>
+                      ) : (
+                        <>
+                          <div className="space-y-1">
+                            {details.lotsUsed && details.lotsUsed.map((l: any, i: number) => (
+                              <div key={i} className="text-xs text-[#0B172B]/70 font-mono">
+                                • {l.lotNumber} ({l.mark}): 
+                                {l.bagsUsed === '-' ? (
+                                  <> <span className="font-semibold text-[#0B172B]">System Balance</span> ({l.weightUsed.toFixed(1)}kg)</>
+                                ) : (
+                                  <> <span className="font-semibold text-[#0B172B]">{l.bagsUsed} bags</span> ({l.weightUsed.toFixed(1)}kg)</>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          {details.totalQuantity !== undefined && (
+                            <div className="text-xs font-bold text-[#0B172B] mt-2 pt-1 border-t border-[#0B172B]/8 font-mono">
+                              Total Input: {details.totalQuantity.toFixed(1)} kg
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
 
@@ -348,14 +376,18 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                     </td>
 
                     <td className="p-4 align-top text-center border-l border-[#0B172B]/8">
-                      <button 
-                        onClick={() => setTraceModalData(record)}
-                        className="p-2 bg-white hover:bg-[#F0F5F9] text-[#0B172B]/60 rounded-xl transition-colors inline-flex flex-col items-center gap-1 border border-[#0B172B]/10 shadow-sm"
-                        title="View Material Traceability Tree"
-                      >
-                        <Network size={16} />
-                        <span className="text-[9px] font-bold uppercase">Trace</span>
-                      </button>
+                      {record.type !== 'LEDGER_ADJUSTMENT' ? (
+                        <button 
+                          onClick={() => setTraceModalData(record)}
+                          className="p-2 bg-white hover:bg-[#F0F5F9] text-[#0B172B]/60 rounded-xl transition-colors inline-flex flex-col items-center gap-1 border border-[#0B172B]/10 shadow-sm"
+                          title="View Material Traceability Tree"
+                        >
+                          <Network size={16} />
+                          <span className="text-[9px] font-bold uppercase">Trace</span>
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-[#0B172B]/30 font-bold uppercase mt-2 block">No Trace</span>
+                      )}
                     </td>
 
                   </tr>
