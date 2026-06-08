@@ -412,7 +412,9 @@ export default function ProcessModule({
               <div className="bg-[#F0F5F9]/50 rounded-xl p-4 mb-5 border border-[#0B172B]/8 text-xs">
                 <div className="flex justify-between mb-3 pb-2 border-b border-[#0B172B]/8">
                   <span className="text-[#0B172B]/55">Initiation Date: <strong className="text-[#0B172B]">{blend.date}</strong></span>
-                  <span className="font-bold text-[#0B172B] text-sm font-mono">Input Weight: {blend.totalQuantity.toFixed(1)} kg</span>
+                  <span className="font-bold text-[#0B172B] text-sm font-mono">
+                    Bags: {blend.lotsUsed.reduce((sum, l) => sum + (l.bagsUsed === '-' ? 0 : Number(l.bagsUsed)), 0)} | Wt: {blend.totalQuantity.toFixed(1)} kg
+                  </span>
                 </div>
                 <p className="font-semibold text-[#0B172B] mb-2">Composed Lots Booked:</p>
                 <div className="max-h-24 overflow-y-auto pr-2 space-y-1.5">

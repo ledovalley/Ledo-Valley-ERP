@@ -834,6 +834,7 @@ export default function App() {
             <thead>
               <tr className="bg-slate-100">
                 <th className="border border-slate-400 p-3 font-bold uppercase text-xs">Lot / Mark Details</th>
+                <th className="border border-slate-400 p-3 font-bold uppercase text-xs">Grade & Labels</th>
                 <th className="border border-slate-400 p-3 font-bold uppercase text-xs text-right">Bags to Pick</th>
                 <th className="border border-slate-400 p-3 font-bold uppercase text-xs text-right">Target Weight</th>
                 <th className="border border-slate-400 p-3 font-bold uppercase text-xs text-center w-32">Picker Sign</th>
@@ -846,6 +847,12 @@ export default function App() {
                     {l.lotNumber}
                     <div className="text-xs text-slate-600 mt-0.5">{l.mark}</div>
                   </td>
+                  <td className="border border-slate-400 p-3 text-sm">
+                    <span className="font-bold text-slate-800">{l.grade || '-'}</span>
+                    {l.labels && l.labels.length > 0 && (
+                      <div className="text-xs text-slate-500 mt-0.5">{l.labels.join(', ')}</div>
+                    )}
+                  </td>
                   <td className="border border-slate-400 p-3 text-right font-bold text-lg">
                     {l.bagsUsed === '-' ? 'Bulk kg' : l.bagsUsed}
                   </td>
@@ -856,8 +863,10 @@ export default function App() {
                 </tr>
               ))}
               <tr className="bg-slate-100">
-                <td className="border border-slate-400 p-3 font-black text-right uppercase text-sm">Total Required:</td>
-                <td className="border border-slate-400 p-3 text-right font-bold"></td>
+                <td colSpan={2} className="border border-slate-400 p-3 font-black text-right uppercase text-sm">Total Required:</td>
+                <td className="border border-slate-400 p-3 text-right font-bold text-lg">
+                  {printBlend.lotsUsed.reduce((sum, l) => sum + (l.bagsUsed === '-' ? 0 : Number(l.bagsUsed)), 0)} bags
+                </td>
                 <td className="border border-slate-400 p-3 text-right font-black text-lg">{printBlend.totalQuantity.toFixed(2)} kg</td>
                 <td className="border border-slate-400 p-3"></td>
               </tr>

@@ -893,13 +893,15 @@ export default function InventoryModule({
                               >
                                 <Edit2 size={13} />
                               </button>
-                              <button 
-                                onClick={() => onDeleteCatalog(item.id)}
-                                className="bg-white text-rose-500 border border-slate-200 hover:bg-rose-50 p-1.5 rounded transition-all inline-flex items-center gap-1 text-xs font-bold"
-                                title="Remove product template from inventory master completely"
-                              >
-                                <Trash2 size={13} /> Delete
-                              </button>
+                              {systemUser.role === 'super_admin' && (
+                                <button 
+                                  onClick={() => onDeleteCatalog(item.id)}
+                                  className="bg-white text-rose-500 border border-slate-200 hover:bg-rose-50 p-1.5 rounded transition-all inline-flex items-center gap-1 text-xs font-bold"
+                                  title="Remove product template from inventory master completely"
+                                >
+                                  <Trash2 size={13} /> Delete
+                                </button>
+                              )}
                             </div>
                           ) : (
                             <div className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 font-semibold bg-slate-100 border px-2 py-1 rounded">

@@ -29,6 +29,8 @@ export interface BlendProcess {
     lotId: string;
     lotNumber: string;
     mark: string;
+    grade?: string;
+    labels?: string[];
     bagsUsed: number | string;
     weightUsed: number;
   }[];

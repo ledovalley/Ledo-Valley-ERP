@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Printer, Search, ArrowLeft, Lock } from 'lucide-react';
+import { Printer, Search, ArrowLeft, Lock, X, Check } from 'lucide-react';
 import { LooseLot, BlendProcess, HistoryRecord } from '@/types';
 
 interface BlendModuleProps {
@@ -39,6 +39,7 @@ export default function BlendModule({
   const [editedBlendId, setEditedBlendId] = useState<string | null>(null);
   const [initialEditLotIds, setInitialEditLotIds] = useState<Set<string>>(new Set());
   const [originalLotsUsed, setOriginalLotsUsed] = useState<Record<string, number>>({});
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
 
   // Auto-generate next batch number
   useEffect(() => {
@@ -170,21 +171,22 @@ export default function BlendModule({
       return;
     }
 
-    if (!window.confirm(`Are you sure you want to submit the blend instruction for "${blendName}"? This will deduct the selected lots from your loose inventory.`)) {
-      return;
-    }
-    
-    const finalBatchNo = `BLEND-LV-${batchNo}`;
-
     for (const lotId in selectedLots) {
       const lot = looseInventory.find(i => i.id === lotId);
       if (!lot) continue;
-      if (lot.id === 'l-balance' && selectedLots[lotId] > lot.weight) {
-        return triggerToast(`Insufficient stock in Loose Tea Balance! Only ${lot.weight} kg available.`, "error");
-      } else if (lot.id !== 'l-balance' && selectedLots[lotId] > lot.bags) {
+      if (lot.id.startsWith('l-') && selectedLots[lotId] > lot.weight) {
+        return triggerToast(`Insufficient stock in ${lot.lotNumber}! Only ${lot.weight} kg available.`, "error");
+      } else if (!lot.id.startsWith('l-') && selectedLots[lotId] > lot.bags) {
         return triggerToast(`Insufficient stock! Cannot book ${selectedLots[lotId]} bags from ${lot.lotNumber}. Only ${lot.bags} bags exist.`, "error");
       }
     }
+
+    setShowPreviewModal(true);
+  };
+
+  const confirmSubmitBlend = () => {
+    setShowPreviewModal(false);
+    const finalBatchNo = `BLEND-LV-${batchNo}`;
 
     const lotsUsedArray = Object.keys(selectedLots).map(id => {
       const l = looseInventory.find(i => i.id === id);
@@ -194,6 +196,8 @@ export default function BlendModule({
         lotId: id, 
         lotNumber: l.lotNumber, 
         mark: l.mark, 
+        grade: l.grade,
+        labels: l.labels,
         bagsUsed: id.startsWith('l-') ? '-' : qtyUsed,
         weightUsed: getLotCalculatedWeight(l, qtyUsed)
       };
@@ -288,11 +292,101 @@ export default function BlendModule({
           <p className="text-xs text-[#0B172B]/55">Select available loose warehouse lots & assign bags for the blend sheet.</p>
         </div>
         {systemUser.role !== 'user' && (
-          <button onClick={handleSubmitBlend} className="bg-[#0B172B] hover:bg-[#009965] shadow-[0_10px_20px_rgba(11,23,43,0.15)] text-white px-5 py-2.5 rounded-xl flex items-center gap-2 font-semibold text-xs self-stretch sm:self-auto justify-center transition-colors">
-            <Printer size={16} /> Submit & Print Blend Sheet
-          </button>
+          <div className="flex gap-3">
+            <button 
+              onClick={handleSubmitBlend}
+              className="bg-[#0B172B] hover:bg-[#1a2b4b] text-white px-4 py-3 rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg text-sm shadow-[#0B172B]/10 transition-all duration-200"
+            >
+              <Printer size={18} />
+              {editedBlendId ? 'Update & Print Blend Sheet' : 'Submit & Print Blend Sheet'}
+            </button>
+          </div>
         )}
       </div>
+
+      {showPreviewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-[#0B172B]/60 backdrop-blur-sm" onClick={() => setShowPreviewModal(false)} />
+          <div className="relative bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+            <div className="flex justify-between items-center p-6 border-b border-[#0B172B]/8 bg-[#F0F5F9]/30">
+              <h2 className="text-xl font-bold text-[#0B172B]">Blend Instruction Preview</h2>
+              <button onClick={() => setShowPreviewModal(false)} className="text-[#0B172B]/40 hover:text-[#0B172B] hover:bg-[#0B172B]/5 p-2 rounded-xl transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1">
+              <div className="bg-[#F0F5F9]/50 rounded-xl p-5 border border-[#0B172B]/8 mb-6">
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <span className="block text-[10px] font-bold text-[#0B172B]/50 uppercase tracking-widest mb-1">Target Blend Name</span>
+                    <span className="text-lg font-bold text-[#0B172B]">{blendName}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-bold text-[#0B172B]/50 uppercase tracking-widest mb-1">Batch Code</span>
+                    <span className="text-lg font-bold font-mono text-[#0B172B]">BLEND-LV-{batchNo}</span>
+                  </div>
+                </div>
+              </div>
+
+              <h3 className="font-bold text-[#0B172B] text-sm mb-4">Composed Raw Materials</h3>
+              <div className="space-y-3">
+                {Object.keys(selectedLots).map(id => {
+                  const lot = looseInventory.find(i => i.id === id);
+                  if (!lot) return null;
+                  const qty = selectedLots[id];
+                  const wt = getLotCalculatedWeight(lot, qty);
+                  const isSys = id.startsWith('l-');
+                  return (
+                    <div key={id} className="flex justify-between items-center bg-white border border-[#0B172B]/8 p-4 rounded-xl shadow-sm">
+                      <div>
+                        <div className="font-bold text-[#0B172B] text-sm flex items-center gap-2">
+                          {lot.lotNumber} 
+                          {isSys && <span className="bg-[#009965]/10 text-[#009965] text-[10px] px-2 py-0.5 rounded font-bold">SYSTEM</span>}
+                        </div>
+                        <div className="text-xs text-[#0B172B]/50 mt-0.5">{lot.mark} {lot.grade ? `• ${lot.grade}` : ''}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-bold text-[#0B172B] font-mono text-sm">
+                          {!isSys ? `${qty} bags` : 'Bulk'}
+                        </div>
+                        <div className="text-xs text-[#0B172B]/50 font-mono mt-0.5">{wt.toFixed(2)} kg</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-[#0B172B]/8 bg-white">
+              <div className="flex justify-between items-center mb-6 px-4">
+                <span className="font-bold text-[#0B172B]/60 uppercase text-xs">Total Target Requirement</span>
+                <div className="text-right">
+                  <span className="block text-sm font-bold text-[#0B172B]/60">
+                    {Object.keys(selectedLots).reduce((acc, id) => acc + (!id.startsWith('l-') ? selectedLots[id] : 0), 0)} bags
+                  </span>
+                  <span className="block text-2xl font-black text-[#009965]">{totalBlendWeight.toFixed(2)} kg</span>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setShowPreviewModal(false)}
+                  className="flex-1 py-3.5 rounded-xl font-bold text-[#0B172B]/60 hover:bg-[#F0F5F9] transition-colors border border-transparent hover:border-[#0B172B]/10"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={confirmSubmitBlend}
+                  className="flex-1 py-3.5 rounded-xl font-bold bg-[#009965] hover:bg-[#007a50] text-white flex items-center justify-center gap-2 shadow-lg shadow-[#009965]/20 transition-all duration-200"
+                >
+                  <Check size={18} />
+                  Confirm & Generate Sheet
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         <div>
