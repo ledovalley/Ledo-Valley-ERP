@@ -36,6 +36,7 @@ export default function BlendModule({
   const [selectedLots, setSelectedLots] = useState<Record<string, number>>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [filterGrade, setFilterGrade] = useState('');
+  const [looseSortBy, setLooseSortBy] = useState('default');
   const [editedBlendId, setEditedBlendId] = useState<string | null>(null);
   const [initialEditLotIds, setInitialEditLotIds] = useState<Set<string>>(new Set());
   const [originalLotsUsed, setOriginalLotsUsed] = useState<Record<string, number>>({});
@@ -105,6 +106,16 @@ export default function BlendModule({
       return matchesSearch && matchesGrade;
     });
 
+    if (looseSortBy === 'stock_asc') {
+      result.sort((a, b) => a.weight - b.weight);
+    } else if (looseSortBy === 'stock_desc') {
+      result.sort((a, b) => b.weight - a.weight);
+    } else if (looseSortBy === 'date') {
+      result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    } else if (looseSortBy === 'date_oldest') {
+      result.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    }
+
     result.sort((a, b) => {
       const aInitial = initialEditLotIds.has(a.id);
       const bInitial = initialEditLotIds.has(b.id);
@@ -119,7 +130,7 @@ export default function BlendModule({
     });
 
     return result;
-  }, [looseInventory, searchTerm, filterGrade, initialEditLotIds]);
+  }, [looseInventory, searchTerm, filterGrade, initialEditLotIds, looseSortBy]);
 
   const handleLotSelect = (lotId: string, checked: boolean) => {
     const newSelected = { ...selectedLots };
@@ -422,6 +433,17 @@ export default function BlendModule({
             >
               <option value="">All Grades</option>
               {uniqueGrades.map(g => <option key={g} value={g}>{g}</option>)}
+            </select>
+            <select 
+              value={looseSortBy} 
+              onChange={e => setLooseSortBy(e.target.value)}
+              className="w-full sm:w-40 py-2 px-3 text-xs border border-[#0B172B]/10 rounded-xl bg-white outline-none text-[#0B172B]/70 font-medium focus:ring-1 focus:ring-[#009965]"
+            >
+              <option value="default">Default View</option>
+              <option value="date">Newest Arrivals</option>
+              <option value="date_oldest">Oldest Stock</option>
+              <option value="stock_desc">Highest Stock</option>
+              <option value="stock_asc">Lowest Stock</option>
             </select>
           </div>
         </div>

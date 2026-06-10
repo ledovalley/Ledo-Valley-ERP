@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { 
   Boxes, ArrowRight, TrendingDown, Trash2, 
-  Plus, Combine, Settings2, Check, Printer, Edit2 
+  Plus, Combine, Settings2, Check, Printer, Edit2, Copy
 } from 'lucide-react';
 import { BlendProcess, CatalogProduct, LooseLot, HistoryRecord } from '@/types';
 
@@ -240,6 +240,93 @@ export default function ProcessModule({
     triggerToast(`"${activeFinalizingBlend.blendName}" complete. Stock updated safely!`);
   };
 
+  const handleDeleteBlend = (blend: BlendProcess) => {
+    if (systemUser.role !== 'super_admin') {
+      return triggerToast("Permission Denied: Only super admins can delete processing blends.", "error");
+    }
+
+    if (!window.confirm(`Are you sure you want to delete "${blend.blendName}"? This will return the utilized stock back to the loose ledger.`)) {
+      return;
+    }
+
+    setLooseInventory((prev: LooseLot[]) => prev.map(lot => {
+      const usedLot = blend.lotsUsed.find(l => l.lotNumber === lot.lotNumber && l.mark === lot.mark);
+      if (usedLot) {
+        if (lot.id.startsWith('l-')) {
+          return { ...lot, weight: lot.weight + usedLot.weightUsed };
+        } else {
+          const bagsRefund = usedLot.bagsUsed === '-' ? 0 : Number(usedLot.bagsUsed);
+          const weightRefund = usedLot.weightUsed;
+          return { ...lot, bags: lot.bags + bagsRefund, weight: lot.weight + weightRefund };
+        }
+      }
+      return lot;
+    }));
+
+    setUnderProcess((prev: BlendProcess[]) => prev.filter(b => b.id !== blend.id));
+    setSelectedForMerge(prev => prev.filter(id => id !== blend.id));
+    triggerToast(`Blend "${blend.blendName}" deleted and stock reverted successfully.`);
+  };
+
+  const handleDuplicateBlend = (blend: BlendProcess) => {
+    let shortfalls: string[] = [];
+    
+    for (const used of blend.lotsUsed) {
+      const lot = looseInventory.find(l => l.lotNumber === used.lotNumber && l.mark === used.mark);
+      if (!lot) {
+        shortfalls.push(`- ${used.lotNumber} (${used.mark}): Lot is completely missing from inventory.`);
+        continue;
+      }
+      
+      if (lot.id.startsWith('l-')) {
+        if (lot.weight < used.weightUsed) {
+          const shortage = used.weightUsed - lot.weight;
+          shortfalls.push(`- ${used.lotNumber} (${used.mark}): Short by ${shortage.toFixed(2)} kg`);
+        }
+      } else {
+        const reqBags = used.bagsUsed === '-' ? 0 : Number(used.bagsUsed);
+        if (lot.bags < reqBags) {
+          const shortageBags = reqBags - lot.bags;
+          shortfalls.push(`- ${used.lotNumber} (${used.mark}): Short by ${shortageBags} bag(s)`);
+        }
+      }
+    }
+
+    if (shortfalls.length > 0) {
+      alert("Stock not available to duplicate this blend. The following shortages were found:\n\n" + shortfalls.join("\n"));
+      return triggerToast("Duplicate failed: Insufficient stock.", "error");
+    }
+
+    if (!window.confirm(`Duplicate "${blend.blendName}"? This will deduct the required stock again.`)) {
+      return;
+    }
+
+    setLooseInventory((prev: LooseLot[]) => prev.map(lot => {
+      const usedLot = blend.lotsUsed.find(l => l.lotNumber === lot.lotNumber && l.mark === lot.mark);
+      if (usedLot) {
+        if (lot.id.startsWith('l-')) {
+          return { ...lot, weight: lot.weight - usedLot.weightUsed };
+        } else {
+          const bagsDeduct = usedLot.bagsUsed === '-' ? 0 : Number(usedLot.bagsUsed);
+          const weightDeduct = usedLot.weightUsed;
+          return { ...lot, bags: lot.bags - bagsDeduct, weight: lot.weight - weightDeduct };
+        }
+      }
+      return lot;
+    }));
+
+    const newBlend: BlendProcess = {
+      ...blend,
+      id: 'PRC-' + Date.now().toString().slice(-8),
+      blendName: `${blend.blendName} (Copy)`,
+      date: new Date().toISOString().split('T')[0],
+      status: 'PENDING'
+    };
+
+    setUnderProcess((prev: BlendProcess[]) => [newBlend, ...prev]);
+    triggerToast(`Blend duplicated successfully!`);
+  };
+
   return (
     <div className="bg-white rounded-2xl border border-[#0B172B]/8 p-6 h-full flex flex-col relative font-sans shadow-[0_10px_30px_rgba(11,23,43,0.04)]">
       
@@ -438,6 +525,22 @@ export default function ProcessModule({
                   >
                     <Edit2 size={14} /> Edit
                   </button>
+                  <button 
+                    onClick={() => handleDuplicateBlend(blend)}
+                    className="bg-white text-[#0B172B]/70 border border-[#0B172B]/10 hover:bg-[#F0F5F9] hover:text-[#009965] px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                    title="Duplicate Blend"
+                  >
+                    <Copy size={14} /> Duplicate
+                  </button>
+                  {systemUser.role === 'super_admin' && (
+                    <button 
+                      onClick={() => handleDeleteBlend(blend)}
+                      className="bg-white text-rose-500 border border-rose-100 hover:bg-rose-50 px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                      title="Delete Blend"
+                    >
+                      <Trash2 size={14} /> Delete
+                    </button>
+                  )}
                   <button 
                     onClick={() => setPrintBlend(blend)}
                     className="bg-white text-[#0B172B]/70 border border-[#0B172B]/10 hover:bg-[#F0F5F9] hover:text-[#009965] px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
