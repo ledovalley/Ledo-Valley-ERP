@@ -8,7 +8,7 @@ import ProcessModule from "@/components/modules/ProcessModule";
 import HistoryModule from "@/components/modules/HistoryModule";
 
 import { signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc, getDoc, getDocs, query, orderBy, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, getDocs, query, orderBy, deleteDoc, runTransaction } from 'firebase/firestore';
 
 // Import our local initialized Firebase instances
 import { auth, db } from '../lib/firebase';
@@ -115,51 +115,73 @@ export default function App() {
 
   // --- Cloud Synchronized Setters ---
   const setPacketCatalog = async (newValOrUpdater: CatalogProduct[] | ((prev: CatalogProduct[]) => CatalogProduct[])) => {
-    setLocalPacketCatalog(prev => {
-      const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
-      if (auth && user) {
-        setDoc(doc(db, 'artifacts', appId, 'globalData', 'catalog'), { items: newVal }).catch(console.error);
-      }
-      return newVal;
-    });
+    setLocalPacketCatalog(prev => typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater);
+    if (auth && user) {
+      const docRef = doc(db, 'artifacts', appId, 'globalData', 'catalog');
+      try {
+        await runTransaction(db, async (transaction) => {
+          const docSnap = await transaction.get(docRef);
+          let currentList: CatalogProduct[] = [];
+          if (docSnap.exists() && docSnap.data().items) currentList = docSnap.data().items;
+          const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(currentList) : newValOrUpdater;
+          transaction.set(docRef, { items: newVal });
+        });
+      } catch (error) { console.error("Transaction failed on setPacketCatalog: ", error); }
+    }
   };
 
   const setLooseInventory = async (newValOrUpdater: LooseLot[] | ((prev: LooseLot[]) => LooseLot[])) => {
-    setLocalLooseInventory(prev => {
-      const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
-      if (auth && user) {
-        setDoc(doc(db, 'artifacts', appId, 'globalData', 'loose'), { items: newVal }).catch(console.error);
-      }
-      return newVal;
-    });
+    setLocalLooseInventory(prev => typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater);
+    if (auth && user) {
+      const docRef = doc(db, 'artifacts', appId, 'globalData', 'loose');
+      try {
+        await runTransaction(db, async (transaction) => {
+          const docSnap = await transaction.get(docRef);
+          let currentList: LooseLot[] = [];
+          if (docSnap.exists() && docSnap.data().items) currentList = docSnap.data().items;
+          const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(currentList) : newValOrUpdater;
+          transaction.set(docRef, { items: newVal });
+        });
+      } catch (error) { console.error("Transaction failed on setLooseInventory: ", error); }
+    }
   };
 
   const setUnderProcess = async (newValOrUpdater: BlendProcess[] | ((prev: BlendProcess[]) => BlendProcess[])) => {
-    setLocalUnderProcess(prev => {
-      const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
-      if (auth && user) {
-        setDoc(doc(db, 'artifacts', appId, 'globalData', 'process'), { items: newVal }).catch(console.error);
-      }
-      return newVal;
-    });
+    setLocalUnderProcess(prev => typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater);
+    if (auth && user) {
+      const docRef = doc(db, 'artifacts', appId, 'globalData', 'process');
+      try {
+        await runTransaction(db, async (transaction) => {
+          const docSnap = await transaction.get(docRef);
+          let currentList: BlendProcess[] = [];
+          if (docSnap.exists() && docSnap.data().items) currentList = docSnap.data().items;
+          const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(currentList) : newValOrUpdater;
+          transaction.set(docRef, { items: newVal });
+        });
+      } catch (error) { console.error("Transaction failed on setUnderProcess: ", error); }
+    }
   };
 
   const setHistoryList = async (newValOrUpdater: HistoryRecord[] | ((prev: HistoryRecord[]) => HistoryRecord[])) => {
+    const enrich = (val: HistoryRecord[]) => val.map(record => (!record.userId && systemUser) ? { ...record, userId: systemUser.userId, userName: systemUser.name } : record);
+    
     setLocalHistoryList(prev => {
       const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
-      
-      const enrichedVal = typeof newValOrUpdater === 'function' ? newVal.map(record => {
-        if (!record.userId && systemUser) {
-          return { ...record, userId: systemUser.userId, userName: systemUser.name };
-        }
-        return record;
-      }) : newVal;
-
-      if (auth && user) {
-        setDoc(doc(db, 'artifacts', appId, 'globalData', 'history'), { items: enrichedVal }).catch(console.error);
-      }
-      return enrichedVal;
+      return enrich(newVal);
     });
+    
+    if (auth && user) {
+      const docRef = doc(db, 'artifacts', appId, 'globalData', 'history');
+      try {
+        await runTransaction(db, async (transaction) => {
+          const docSnap = await transaction.get(docRef);
+          let currentList: HistoryRecord[] = [];
+          if (docSnap.exists() && docSnap.data().items) currentList = docSnap.data().items;
+          const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(currentList) : newValOrUpdater;
+          transaction.set(docRef, { items: enrich(newVal) });
+        });
+      } catch (error) { console.error("Transaction failed on setHistoryList: ", error); }
+    }
   };
 
   // 1. Firebase Authentication Hook
