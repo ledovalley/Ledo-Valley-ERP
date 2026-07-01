@@ -126,8 +126,10 @@ export default function ProcessModule({
       lotsUsed: blendsToMerge.flatMap(b => b.lotsUsed) 
     };
 
-    const remaining = underProcess.filter(b => !selectedForMerge.includes(b.id));
-    setUnderProcess([...remaining, newMergedBlend]);
+    setUnderProcess(prev => {
+      const remaining = prev.filter(b => !selectedForMerge.includes(b.id));
+      return [...remaining, newMergedBlend];
+    });
     setSelectedForMerge([]);
     triggerToast("In-process streams consolidated successfully!");
   };

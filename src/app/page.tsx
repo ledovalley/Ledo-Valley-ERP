@@ -14,6 +14,16 @@ import { collection, onSnapshot, doc, setDoc, getDoc, getDocs, query, orderBy, d
 import { auth, db } from '../lib/firebase';
 import { User } from 'firebase/auth';
 import { CatalogProduct, LooseLot, BlendProcess, HistoryRecord, SystemUser } from '@/types';
+
+let pendingCloudWrites = 0;
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', (e) => {
+    if (pendingCloudWrites > 0) {
+      e.preventDefault();
+      e.returnValue = 'Data is still saving to the cloud. Are you sure you want to exit?';
+    }
+  });
+}
 import Image from 'next/image';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import DeleteModal from '@/components/ui/DeleteModal';
@@ -115,8 +125,13 @@ export default function App() {
 
   // --- Cloud Synchronized Setters ---
   const setPacketCatalog = async (newValOrUpdater: CatalogProduct[] | ((prev: CatalogProduct[]) => CatalogProduct[])) => {
-    setLocalPacketCatalog(prev => typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater);
+    let capturedPrev: CatalogProduct[] = [];
+    setLocalPacketCatalog(prev => {
+      capturedPrev = prev;
+      return typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+    });
     if (auth && user) {
+      pendingCloudWrites++;
       const docRef = doc(db, 'artifacts', appId, 'globalData', 'catalog');
       try {
         await runTransaction(db, async (transaction) => {
@@ -126,13 +141,24 @@ export default function App() {
           const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(currentList) : newValOrUpdater;
           transaction.set(docRef, { items: newVal });
         });
-      } catch (error) { console.error("Transaction failed on setPacketCatalog: ", error); }
+      } catch (error) { 
+        console.error("Transaction failed on setPacketCatalog: ", error);
+        alert("Network Sync Error: Failed to save changes to the cloud. Your action has been reverted. Please check your connection and try again.");
+        setLocalPacketCatalog(capturedPrev);
+      } finally {
+        pendingCloudWrites--;
+      }
     }
   };
 
   const setLooseInventory = async (newValOrUpdater: LooseLot[] | ((prev: LooseLot[]) => LooseLot[])) => {
-    setLocalLooseInventory(prev => typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater);
+    let capturedPrev: LooseLot[] = [];
+    setLocalLooseInventory(prev => {
+      capturedPrev = prev;
+      return typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+    });
     if (auth && user) {
+      pendingCloudWrites++;
       const docRef = doc(db, 'artifacts', appId, 'globalData', 'loose');
       try {
         await runTransaction(db, async (transaction) => {
@@ -142,13 +168,24 @@ export default function App() {
           const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(currentList) : newValOrUpdater;
           transaction.set(docRef, { items: newVal });
         });
-      } catch (error) { console.error("Transaction failed on setLooseInventory: ", error); }
+      } catch (error) { 
+        console.error("Transaction failed on setLooseInventory: ", error);
+        alert("Network Sync Error: Failed to save changes to the cloud. Your action has been reverted. Please check your connection and try again.");
+        setLocalLooseInventory(capturedPrev);
+      } finally {
+        pendingCloudWrites--;
+      }
     }
   };
 
   const setUnderProcess = async (newValOrUpdater: BlendProcess[] | ((prev: BlendProcess[]) => BlendProcess[])) => {
-    setLocalUnderProcess(prev => typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater);
+    let capturedPrev: BlendProcess[] = [];
+    setLocalUnderProcess(prev => {
+      capturedPrev = prev;
+      return typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+    });
     if (auth && user) {
+      pendingCloudWrites++;
       const docRef = doc(db, 'artifacts', appId, 'globalData', 'process');
       try {
         await runTransaction(db, async (transaction) => {
@@ -158,19 +195,28 @@ export default function App() {
           const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(currentList) : newValOrUpdater;
           transaction.set(docRef, { items: newVal });
         });
-      } catch (error) { console.error("Transaction failed on setUnderProcess: ", error); }
+      } catch (error) { 
+        console.error("Transaction failed on setUnderProcess: ", error);
+        alert("Network Sync Error: Failed to save changes to the cloud. Your action has been reverted. Please check your connection and try again.");
+        setLocalUnderProcess(capturedPrev);
+      } finally {
+        pendingCloudWrites--;
+      }
     }
   };
 
   const setHistoryList = async (newValOrUpdater: HistoryRecord[] | ((prev: HistoryRecord[]) => HistoryRecord[])) => {
     const enrich = (val: HistoryRecord[]) => val.map(record => (!record.userId && systemUser) ? { ...record, userId: systemUser.userId, userName: systemUser.name } : record);
     
+    let capturedPrev: HistoryRecord[] = [];
     setLocalHistoryList(prev => {
+      capturedPrev = prev;
       const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
       return enrich(newVal);
     });
     
     if (auth && user) {
+      pendingCloudWrites++;
       const docRef = doc(db, 'artifacts', appId, 'globalData', 'history');
       try {
         await runTransaction(db, async (transaction) => {
@@ -180,7 +226,13 @@ export default function App() {
           const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(currentList) : newValOrUpdater;
           transaction.set(docRef, { items: enrich(newVal) });
         });
-      } catch (error) { console.error("Transaction failed on setHistoryList: ", error); }
+      } catch (error) { 
+        console.error("Transaction failed on setHistoryList: ", error);
+        alert("Network Sync Error: Failed to save changes to the cloud. Your action has been reverted. Please check your connection and try again.");
+        setLocalHistoryList(capturedPrev);
+      } finally {
+        pendingCloudWrites--;
+      }
     }
   };
 
