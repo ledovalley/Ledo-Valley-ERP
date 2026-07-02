@@ -18,6 +18,7 @@ interface ProcessModuleProps {
   onRevertAndEdit: (blend: BlendProcess) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
   systemUser: any;
+  logSystemAction: (action: string, details: string, isError?: boolean) => void;
 }
 
 function SearchableProductSelect({ value, onChange, catalog }: { value: string, onChange: (val: string) => void, catalog: CatalogProduct[] }) {
@@ -94,7 +95,8 @@ export default function ProcessModule({
   setPrintBlend,
   onRevertAndEdit,
   triggerToast,
-  systemUser
+  systemUser,
+  logSystemAction
 }: ProcessModuleProps) {
   const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
   const [activeFinalizingBlend, setActiveFinalizingBlend] = useState<BlendProcess | null>(null);
@@ -131,6 +133,7 @@ export default function ProcessModule({
       return [...remaining, newMergedBlend];
     });
     setSelectedForMerge([]);
+    logSystemAction('MERGE_BLENDS', `Merged ${blendsToMerge.length} blends into ${newMergedBlend.blendName} (${newMergedBlend.totalQuantity}kg)`);
     triggerToast("In-process streams consolidated successfully!");
   };
 
@@ -239,6 +242,8 @@ export default function ProcessModule({
     setUnderProcess(prev => prev.filter(b => b.id !== activeFinalizingBlend.id));
     setActiveFinalizingBlend(null);
     setSelectedForMerge(prev => prev.filter(id => id !== activeFinalizingBlend.id));
+    
+    logSystemAction('FINALIZE_BLEND', `Finalized ${activeFinalizingBlend.blendName}. Output: ${totalOutputWeight.toFixed(2)}kg`);
     triggerToast(`"${activeFinalizingBlend.blendName}" complete. Stock updated safely!`);
   };
 
@@ -267,6 +272,7 @@ export default function ProcessModule({
 
     setUnderProcess((prev: BlendProcess[]) => prev.filter(b => b.id !== blend.id));
     setSelectedForMerge(prev => prev.filter(id => id !== blend.id));
+    logSystemAction('DELETE_BLEND', `Deleted blend: ${blend.blendName} and reverted stock`, true);
     triggerToast(`Blend "${blend.blendName}" deleted and stock reverted successfully.`);
   };
 
@@ -296,6 +302,7 @@ export default function ProcessModule({
 
     if (shortfalls.length > 0) {
       alert("Stock not available to duplicate this blend. The following shortages were found:\n\n" + shortfalls.join("\n"));
+      logSystemAction('DUPLICATE_FAILED', `Failed to duplicate ${blend.blendName} due to insufficient stock.`, true);
       return triggerToast("Duplicate failed: Insufficient stock.", "error");
     }
 
@@ -326,6 +333,7 @@ export default function ProcessModule({
     };
 
     setUnderProcess((prev: BlendProcess[]) => [newBlend, ...prev]);
+    logSystemAction('DUPLICATE_BLEND', `Duplicated blend into ${newBlend.blendName} (${newBlend.totalQuantity}kg)`);
     triggerToast(`Blend duplicated successfully!`);
   };
 

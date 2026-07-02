@@ -6,6 +6,7 @@ import InventoryModule from "@/components/modules/InventoryModule";
 import BlendModule from "@/components/modules/BlendModule";
 import ProcessModule from "@/components/modules/ProcessModule";
 import HistoryModule from "@/components/modules/HistoryModule";
+import AuditLogsModule from "@/components/modules/AuditLogsModule";
 
 import { signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { collection, onSnapshot, doc, setDoc, getDoc, getDocs, query, orderBy, deleteDoc, runTransaction } from 'firebase/firestore';
@@ -13,7 +14,7 @@ import { collection, onSnapshot, doc, setDoc, getDoc, getDocs, query, orderBy, d
 // Import our local initialized Firebase instances
 import { auth, db } from '../lib/firebase';
 import { User } from 'firebase/auth';
-import { CatalogProduct, LooseLot, BlendProcess, HistoryRecord, SystemUser } from '@/types';
+import { CatalogProduct, LooseLot, BlendProcess, HistoryRecord, SystemUser, AuditLog } from '@/types';
 
 let pendingCloudWrites = 0;
 if (typeof window !== 'undefined') {
@@ -63,7 +64,8 @@ import {
   Menu,
   X,
   Edit2,
-  LogOut
+  LogOut,
+  List
 } from 'lucide-react';
 
 const appId = 'ledo-valley-erp'; // hardcoded app ID for now
@@ -122,6 +124,38 @@ export default function App() {
   const [localLooseInventory, setLocalLooseInventory] = useState<LooseLot[]>([]);
   const [localUnderProcess, setLocalUnderProcess] = useState<BlendProcess[]>([]);
   const [localHistoryList, setLocalHistoryList] = useState<HistoryRecord[]>([]);
+  const [localAuditLogs, setLocalAuditLogs] = useState<AuditLog[]>([]);
+
+  // --- Global Audit Logger ---
+  const logSystemAction = async (action: string, details: string, isError: boolean = false) => {
+    if (!systemUser) return;
+    const newLog: AuditLog = {
+      id: 'LOG-' + Date.now().toString(),
+      timestamp: new Date().toISOString(),
+      action,
+      details,
+      userName: systemUser.name,
+      userId: systemUser.userId,
+      isError
+    };
+
+    setLocalAuditLogs(prev => [newLog, ...prev]);
+
+    if (auth && user) {
+      const docRef = doc(db, 'artifacts', appId, 'globalData', 'audit_logs');
+      try {
+        await runTransaction(db, async (transaction) => {
+          const docSnap = await transaction.get(docRef);
+          let currentList: AuditLog[] = [];
+          if (docSnap.exists() && docSnap.data().items) currentList = docSnap.data().items;
+          const updatedList = [newLog, ...currentList].slice(0, 1000); // Keep max 1000 logs
+          transaction.set(docRef, { items: updatedList });
+        });
+      } catch (error) { 
+        console.error("Failed to write audit log: ", error);
+      }
+    }
+  };
 
   // --- Cloud Synchronized Setters ---
   const setPacketCatalog = async (newValOrUpdater: CatalogProduct[] | ((prev: CatalogProduct[]) => CatalogProduct[])) => {
@@ -278,12 +312,14 @@ export default function App() {
       let loadedLoose: LooseLot[] | null = null;
       let loadedProcess: BlendProcess[] | null = null;
       let loadedHistory: HistoryRecord[] | null = null;
+      let loadedAuditLogs: AuditLog[] | null = null;
       
       snapshot.forEach(d => {
         if (d.id === 'catalog') loadedCatalog = d.data().items;
         if (d.id === 'loose') loadedLoose = d.data().items;
         if (d.id === 'process') loadedProcess = d.data().items;
         if (d.id === 'history') loadedHistory = d.data().items;
+        if (d.id === 'audit_logs') loadedAuditLogs = d.data().items;
       });
 
       if (loadedLoose) {
@@ -327,17 +363,20 @@ export default function App() {
         setDoc(doc(db, 'artifacts', appId, 'globalData', 'history'), { items: [] });
         loadedHistory = [];
       }
+      if (!loadedAuditLogs) {
+        setDoc(doc(db, 'artifacts', appId, 'globalData', 'audit_logs'), { items: [] });
+        loadedAuditLogs = [];
+      }
 
-      setLocalPacketCatalog(loadedCatalog);
-      setLocalLooseInventory(loadedLoose);
-      setLocalUnderProcess(loadedProcess);
-      setLocalHistoryList(loadedHistory);
-      
+      if (loadedCatalog !== null) setLocalPacketCatalog(loadedCatalog);
+      if (loadedLoose !== null) setLocalLooseInventory(loadedLoose);
+      if (loadedProcess !== null) setLocalUnderProcess(loadedProcess);
+      if (loadedHistory !== null) setLocalHistoryList(loadedHistory);
+      if (loadedAuditLogs !== null) setLocalAuditLogs(loadedAuditLogs);
       setIsDataLoaded(true);
     }, (error) => {
       console.error("Firestore error:", error);
     });
-
     return () => unsubscribe();
   }, [user, systemUser]);
 
@@ -476,6 +515,7 @@ export default function App() {
       }
       return item;
     }));
+    logSystemAction('EDIT_LOOSE_TEA', `Updated details for lot ID: ${id}`);
     triggerToast("Loose tea lot details updated manually.");
   };
 
@@ -494,6 +534,7 @@ export default function App() {
       }
       return item;
     }));
+    logSystemAction('EDIT_PRODUCT', `Updated catalog product ID: ${id}`);
     triggerToast("Packet product details updated manually.");
   };
 
@@ -503,6 +544,7 @@ export default function App() {
       return;
     }
     setPacketCatalog(prev => [...prev, { ...newProduct, id: 'p-' + Date.now(), stock: 0 }]);
+    logSystemAction('CREATE_PRODUCT', `Added new product to catalog: ${newProduct.name}`);
     triggerToast(`"${newProduct.name}" registered to the master list catalog.`);
   };
 
@@ -523,11 +565,13 @@ export default function App() {
         message: `"${product.name}" currently has a stock balance of ${product.stock} ${product.unit}(s). Deleting this will clear the historical stock metadata. Proceed?`,
         onConfirm: () => {
           setPacketCatalog(prev => prev.filter(p => p.id !== productId));
+          logSystemAction('DELETE_PRODUCT', `Force deleted product: ${product.name} with stock ${product.stock}`, true);
           triggerToast(`"${product.name}" has been deleted from catalog.`, "error");
         }
       });
     } else {
       setPacketCatalog(prev => prev.filter(p => p.id !== productId));
+      logSystemAction('DELETE_PRODUCT', `Deleted empty product: ${product?.name}`);
       triggerToast("Product template deleted from catalog list successfully.");
     }
   };
@@ -550,6 +594,7 @@ export default function App() {
       details: { targetId, targetName, amount, reason }
     };
     setHistoryList(prev => [adjustmentHistory, ...prev]);
+    logSystemAction('LEDGER_ADJUSTMENT', `Adjusted [${targetName}] by ${amount > 0 ? '+' : ''}${amount.toFixed(2)} kg. Reason: ${reason}`);
     triggerToast(`[${targetName}] successfully adjusted by ${amount > 0 ? '+' : ''}${amount.toFixed(2)} kg.`);
   };
 
@@ -602,6 +647,7 @@ export default function App() {
     
     setUnderProcess(prev => [revertedBlend as BlendProcess, ...prev]);
 
+    logSystemAction('UNDO_FINALIZATION', `Reversed finalization of blend: ${blendDetails.blendName}`, true);
     triggerToast(`Finalization reversed! "${blendDetails.blendName}" is back under process.`);
   };
 
@@ -669,6 +715,7 @@ export default function App() {
 
   if (systemUser.role === 'super_admin') {
     navItems.push({ id: 'users', label: 'User Management', icon: <Shield size={20} /> });
+    navItems.push({ id: 'audit', label: 'Audit Logs', icon: <List size={20} /> });
   }
 
   const isCatalogUnlocked = systemUser.role === 'super_admin' || systemUser.role === 'manager';
@@ -825,6 +872,7 @@ export default function App() {
                 onLedgerAdjustment={handleLedgerAdjustment}
                 triggerToast={triggerToast}
                 systemUser={systemUser}
+                logSystemAction={logSystemAction}
               />
             )}
             {activeTab === 'blend' && (
@@ -841,6 +889,7 @@ export default function App() {
                 setEditingProcess={setEditingProcess}
                 triggerToast={triggerToast} 
                 systemUser={systemUser}
+                logSystemAction={logSystemAction}
               />
             )}
             {activeTab === 'process' && (
@@ -857,6 +906,7 @@ export default function App() {
                 onRevertAndEdit={handleRevertAndEditProcess}
                 triggerToast={triggerToast} 
                 systemUser={systemUser}
+                logSystemAction={logSystemAction}
               />
             )}
             {activeTab === 'history' && (
@@ -864,18 +914,26 @@ export default function App() {
                 historyList={localHistoryList}
                 systemUser={systemUser}
                 onUndoFinalization={handleUndoFinalization}
+                logSystemAction={logSystemAction}
               />
             )}
             {activeTab === 'users' && systemUser.role === 'super_admin' && (
               <UserManagementModule 
                 triggerToast={triggerToast} 
                 historyList={localHistoryList}
+                logSystemAction={logSystemAction}
+              />
+            )}
+            {activeTab === 'audit' && systemUser.role === 'super_admin' && (
+              <AuditLogsModule
+                auditLogs={localAuditLogs}
+                systemUser={systemUser}
               />
             )}
           </div>
         </main>
-        </div>
       </div>
+    </div>
 
       {/* Hidden Print Layout */}
       {printBlend && (

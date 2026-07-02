@@ -19,7 +19,7 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-export default function UserManagementModule({ triggerToast, historyList = [] }: { triggerToast: any, historyList: HistoryRecord[] }) {
+export default function UserManagementModule({ triggerToast, historyList = [], logSystemAction }: { triggerToast: any, historyList: HistoryRecord[], logSystemAction: (action: string, details: string, isError?: boolean) => void }) {
   const [users, setUsers] = useState<SystemUser[]>([]);
   const [name, setName] = useState('');
   const [number, setNumber] = useState('');
@@ -71,6 +71,7 @@ export default function UserManagementModule({ triggerToast, historyList = [] }:
       setName('');
       setNumber('');
       setRole('user');
+      logSystemAction('CREATE_USER', `Created new user: ${name} (${rawId}) with role: ${role}`);
       triggerToast('User created successfully!');
     } catch (err: any) {
       console.error(err);
@@ -90,6 +91,8 @@ export default function UserManagementModule({ triggerToast, historyList = [] }:
   const handleDeleteUser = async (uid: string) => {
     if (confirm('Remove this user? Their history will remain intact, but they will not be able to log in. Note: To permanently delete auth, use Firebase Console.')) {
       await deleteDoc(doc(db, 'artifacts', 'ledo-valley-erp', 'users', uid));
+      const user = users.find(u => u.uid === uid);
+      logSystemAction('DELETE_USER', `Revoked access for user: ${user?.name} (${user?.userId})`, true);
       triggerToast('User access revoked.');
     }
   };

@@ -21,6 +21,7 @@ interface InventoryModuleProps {
   onLedgerAdjustment?: (targetId: string, amount: number, reason: string) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
   systemUser: any;
+  logSystemAction: (action: string, details: string, isError?: boolean) => void;
 }
 
 export default function InventoryModule({ 
@@ -39,7 +40,8 @@ export default function InventoryModule({
   onAddCatalogProduct,
   onLedgerAdjustment,
   triggerToast,
-  systemUser
+  systemUser,
+  logSystemAction
 }: InventoryModuleProps) {
   const [activeTab, setActiveTab] = useState<'loose'|'packet'>('loose');
   const [searchTerm, setSearchTerm] = useState('');
@@ -100,6 +102,7 @@ export default function InventoryModule({
     };
 
     setLooseInventory(prev => [...prev, newLot]);
+    logSystemAction('CREATE_LOOSE', `Received loose tea lot: ${newLot.lotNumber} (${newLot.mark}) - ${newLot.weight}kg`);
     triggerToast('Raw loose tea lot received and entered in stock ledger!');
     setLooseForm({ lotNumber: '', grade: '', mark: '', bags: '', weightPerBag: '', date: new Date().toISOString().split('T')[0], labels: '' });
     setShowReceiveLoose(false);
@@ -118,6 +121,7 @@ export default function InventoryModule({
     }));
 
     if (selectedProductDetail) {
+      logSystemAction('ADD_STOCK', `Added ${qtyToAdd} ${selectedProductDetail.unit}(s) to product: ${selectedProductDetail.name}`);
       triggerToast(`Received ${qtyToAdd} ${selectedProductDetail.unit}(s) of "${selectedProductDetail.name}" successfully!`);
     }
     setPacketForm({ productId: '', quantity: '', date: new Date().toISOString().split('T')[0] });

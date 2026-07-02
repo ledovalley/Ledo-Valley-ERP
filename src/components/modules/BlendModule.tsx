@@ -15,6 +15,7 @@ interface BlendModuleProps {
   setEditingProcess: (p: BlendProcess | null) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
   systemUser: any;
+  logSystemAction: (action: string, details: string, isError?: boolean) => void;
 }
 
 export default function BlendModule({ 
@@ -29,7 +30,8 @@ export default function BlendModule({
   editingProcess,
   setEditingProcess,
   triggerToast,
-  systemUser
+  systemUser,
+  logSystemAction
 }: BlendModuleProps) {
   const [blendName, setBlendName] = useState('');
   const [batchNo, setBatchNo] = useState('');
@@ -59,7 +61,7 @@ export default function BlendModule({
       const newSelectedLots: Record<string, number> = {};
       const initialIds = new Set<string>();
       const origUsed: Record<string, number> = {};
-      editingProcess.lotsUsed.forEach(lot => {
+      editingProcess.lotsUsed.forEach((lot: any) => {
         const qty = lot.lotId.startsWith('l-') ? lot.weightUsed : (parseFloat(lot.bagsUsed as string) || 0);
         newSelectedLots[lot.lotId] = qty;
         origUsed[lot.lotId] = qty;
@@ -274,6 +276,12 @@ export default function BlendModule({
       details: newBlend
     };
     setHistoryList((prev: any) => [creationHistory, ...prev]);
+
+    if (editedBlendId) {
+      logSystemAction('EDIT_BLEND', `Re-submitted edited blend: ${blendName} for ${totalBlendWeight.toFixed(2)} kg`);
+    } else {
+      logSystemAction('CREATE_BLEND', `Created new blend: ${blendName} for ${totalBlendWeight.toFixed(2)} kg`);
+    }
 
     triggerToast(editedBlendId ? `Blend [${newBlend.id}] successfully updated!` : `Blend [${newBlend.id}] created and sent to printer.`);
     setPrintBlend(newBlend);

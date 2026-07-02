@@ -58,3 +58,13 @@ export interface SystemUser {
   role: Role;
   createdAt: string;
 }
+
+export interface AuditLog {
+  id: string;
+  timestamp: string;
+  action: string;
+  details: string;
+  userName: string;
+  userId: string;
+  isError: boolean;
+}

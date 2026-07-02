@@ -8,6 +8,7 @@ interface HistoryModuleProps {
   historyList: HistoryRecord[];
   systemUser: SystemUser;
   onUndoFinalization?: (record: HistoryRecord) => void;
+  logSystemAction?: (action: string, details: string, isError?: boolean) => void;
 }
 
 export default function HistoryModule({ historyList = [], systemUser, onUndoFinalization }: HistoryModuleProps) {
