@@ -142,7 +142,7 @@ export default function App() {
     setLocalAuditLogs(prev => [newLog, ...prev]);
 
     if (auth && user) {
-      const docRef = doc(db, 'artifacts', appId, 'globalData', 'audit_logs');
+      const docRef = doc(db, 'artifacts', appId, 'systemData', 'audit_logs');
       try {
         await runTransaction(db, async (transaction) => {
           const docSnap = await transaction.get(docRef);
@@ -312,14 +312,12 @@ export default function App() {
       let loadedLoose: LooseLot[] | null = null;
       let loadedProcess: BlendProcess[] | null = null;
       let loadedHistory: HistoryRecord[] | null = null;
-      let loadedAuditLogs: AuditLog[] | null = null;
       
       snapshot.forEach(d => {
         if (d.id === 'catalog') loadedCatalog = d.data().items;
         if (d.id === 'loose') loadedLoose = d.data().items;
         if (d.id === 'process') loadedProcess = d.data().items;
         if (d.id === 'history') loadedHistory = d.data().items;
-        if (d.id === 'audit_logs') loadedAuditLogs = d.data().items;
       });
 
       if (loadedLoose) {
@@ -363,19 +361,29 @@ export default function App() {
         setDoc(doc(db, 'artifacts', appId, 'globalData', 'history'), { items: [] });
         loadedHistory = [];
       }
-      if (!loadedAuditLogs) {
-        setDoc(doc(db, 'artifacts', appId, 'globalData', 'audit_logs'), { items: [] });
-        loadedAuditLogs = [];
-      }
+
 
       if (loadedCatalog !== null) setLocalPacketCatalog(loadedCatalog);
       if (loadedLoose !== null) setLocalLooseInventory(loadedLoose);
       if (loadedProcess !== null) setLocalUnderProcess(loadedProcess);
       if (loadedHistory !== null) setLocalHistoryList(loadedHistory);
-      if (loadedAuditLogs !== null) setLocalAuditLogs(loadedAuditLogs);
       setIsDataLoaded(true);
     }, (error) => {
       console.error("Firestore error:", error);
+    });
+    return () => unsubscribe();
+  }, [user, systemUser]);
+
+  // 2.5 Audit Logs Listener (Admin Only)
+  useEffect(() => {
+    if (!auth || !user || !systemUser || systemUser.role !== 'super_admin') return;
+    const docRef = doc(db, 'artifacts', appId, 'systemData', 'audit_logs');
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists() && docSnap.data().items) {
+        setLocalAuditLogs(docSnap.data().items);
+      }
+    }, (error) => {
+      console.error("Audit log sync error:", error);
     });
     return () => unsubscribe();
   }, [user, systemUser]);
