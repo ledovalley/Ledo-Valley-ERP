@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Warehouse, Plus, Trash2, Edit2, Search, Filter, Shield, Lock, Unlock, Eye, EyeOff, Check, Download, PackagePlus, Clock, X, Boxes, FileText, File } from 'lucide-react';
-import { LooseLot, CatalogProduct } from '@/types';
+import { LooseLot, CatalogProduct, HistoryRecord } from '@/types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -21,6 +21,7 @@ interface InventoryModuleProps {
   onLedgerAdjustment?: (targetId: string, amount: number, reason: string) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
   systemUser: any;
+  historyList: HistoryRecord[];
   logSystemAction: (action: string, details: string, isError?: boolean) => void;
 }
 
@@ -41,10 +42,12 @@ export default function InventoryModule({
   onLedgerAdjustment,
   triggerToast,
   systemUser,
+  historyList,
   logSystemAction
 }: InventoryModuleProps) {
   const [activeTab, setActiveTab] = useState<'loose'|'packet'>('loose');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedLotForAudit, setSelectedLotForAudit] = useState<{ type: 'loose' | 'catalog', item: LooseLot | CatalogProduct } | null>(null);
   const [looseSortBy, setLooseSortBy] = useState('default');
   
   const [showAddNewProduct, setShowAddNewProduct] = useState(false);
@@ -778,7 +781,11 @@ export default function InventoryModule({
 
 
                     return (
-                      <tr key={item.id} className={`group hover:bg-[#F0F5F9]/50 transition-all ${item.bags === 0 && item.weight <= 0 ? 'bg-[#F0F5F9]/50 text-[#0B172B]/40 opacity-60' : ''}`}>
+                      <tr 
+                        key={item.id} 
+                        className={`group hover:bg-[#F0F5F9]/50 transition-all cursor-pointer ${item.bags === 0 && item.weight <= 0 ? 'bg-[#F0F5F9]/50 text-[#0B172B]/40 opacity-60' : ''}`}
+                        onClick={() => setSelectedLotForAudit({ type: 'loose', item })}
+                      >
                         <td className="p-4">
                           <div className="font-bold text-[#0B172B] group-hover:text-[#009965] transition-colors">{item.lotNumber}</div>
                           {item.id !== 'l-balance' && (
@@ -867,7 +874,11 @@ export default function InventoryModule({
 
 
                     return (
-                      <tr key={item.id} className={`group hover:bg-slate-50 transition-all ${item.stock === 0 ? 'bg-slate-50/50 text-slate-400 opacity-60' : ''}`}>
+                      <tr 
+                        key={item.id} 
+                        className={`group hover:bg-slate-50 transition-all cursor-pointer ${item.stock === 0 ? 'bg-slate-50/50 text-slate-400 opacity-60' : ''}`}
+                        onClick={() => setSelectedLotForAudit({ type: 'catalog', item })}
+                      >
                         <td className="p-4 font-bold text-slate-800 group-hover:text-emerald-700 transition-colors">{item.name}</td>
                         <td className="p-4 text-center text-slate-500 font-mono text-xs">{item.hsnCode || '-'}</td>
                         <td className="p-4 text-center text-slate-500 font-mono text-xs">{item.gstRate !== undefined ? `${item.gstRate}%` : '5%'}</td>
@@ -1107,6 +1118,127 @@ export default function InventoryModule({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {selectedLotForAudit && (
+        <div className="fixed inset-0 bg-[#0B172B]/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto" onClick={() => setSelectedLotForAudit(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <div className="p-6 border-b border-[#0B172B]/8 flex justify-between items-start bg-[#F0F5F9]/30">
+              <div>
+                <h3 className="text-xl font-bold text-[#0B172B] mb-1">
+                  {selectedLotForAudit.type === 'loose' 
+                    ? `Lot Details: ${(selectedLotForAudit.item as LooseLot).lotNumber}`
+                    : `Product Details: ${(selectedLotForAudit.item as CatalogProduct).name}`
+                  }
+                </h3>
+                <p className="text-sm font-medium text-[#0B172B]/55">
+                  {selectedLotForAudit.type === 'loose' 
+                    ? `Mark: ${(selectedLotForAudit.item as LooseLot).mark} • Grade: ${(selectedLotForAudit.item as LooseLot).grade}`
+                    : `Size: ${(selectedLotForAudit.item as CatalogProduct).size} kg • Unit: ${(selectedLotForAudit.item as CatalogProduct).unit}`
+                  }
+                </p>
+              </div>
+              <button onClick={() => setSelectedLotForAudit(null)} className="p-2 hover:bg-[#0B172B]/5 rounded-xl transition-colors">
+                <X size={20} className="text-[#0B172B]/50" />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1 bg-white">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+                <div className="bg-[#F0F5F9]/50 rounded-xl p-4 border border-[#0B172B]/5">
+                  <p className="text-[10px] uppercase tracking-wider font-bold text-[#0B172B]/50 mb-1">Current Stock</p>
+                  <p className="text-lg font-bold text-[#0B172B]">
+                    {selectedLotForAudit.type === 'loose' 
+                      ? `${(selectedLotForAudit.item as LooseLot).weight.toFixed(2)} kg`
+                      : `${(selectedLotForAudit.item as CatalogProduct).stock} units`
+                    }
+                  </p>
+                </div>
+                {selectedLotForAudit.type === 'loose' && (
+                  <div className="bg-[#F0F5F9]/50 rounded-xl p-4 border border-[#0B172B]/5">
+                    <p className="text-[10px] uppercase tracking-wider font-bold text-[#0B172B]/50 mb-1">Bags Available</p>
+                    <p className="text-lg font-bold text-[#0B172B]">{(selectedLotForAudit.item as LooseLot).bags} bags</p>
+                  </div>
+                )}
+                <div className="bg-[#F0F5F9]/50 rounded-xl p-4 border border-[#0B172B]/5">
+                  <p className="text-[10px] uppercase tracking-wider font-bold text-[#0B172B]/50 mb-1">Date Added</p>
+                  <p className="text-sm font-bold text-[#0B172B] mt-1">
+                    {selectedLotForAudit.type === 'loose' 
+                      ? (selectedLotForAudit.item as LooseLot).date
+                      : 'Master Catalog'
+                    }
+                  </p>
+                </div>
+                <div className="bg-[#F0F5F9]/50 rounded-xl p-4 border border-[#0B172B]/5">
+                  <p className="text-[10px] uppercase tracking-wider font-bold text-[#0B172B]/50 mb-1">ID Ref</p>
+                  <p className="text-xs font-mono font-bold text-[#0B172B]/70 mt-1 truncate" title={selectedLotForAudit.item.id}>{selectedLotForAudit.item.id}</p>
+                </div>
+              </div>
+
+              <h4 className="font-bold text-[#0B172B] mb-4 flex items-center gap-2">
+                <Clock size={16} className="text-[#009965]" /> History & Audit Trail
+              </h4>
+              
+              <div className="space-y-3 relative before:absolute before:inset-y-0 before:left-[15px] before:w-0.5 before:bg-[#0B172B]/5">
+                {(() => {
+                  const queryId = selectedLotForAudit.item.id;
+                  const queryName = selectedLotForAudit.type === 'loose' ? (selectedLotForAudit.item as LooseLot).lotNumber : (selectedLotForAudit.item as CatalogProduct).name;
+                  
+                  const relatedHistory = historyList.filter(h => {
+                    if (h.details && h.details.targetId === queryId) return true;
+                    if (h.details && h.details.lotId === queryId) return true;
+                    if (h.details && h.details.lotNumber === queryName) return true;
+                    if (h.desc && h.desc.includes(queryName)) return true;
+                    if (h.desc && h.desc.includes(queryId)) return true;
+                    return false;
+                  });
+
+                  if (relatedHistory.length === 0) {
+                    return (
+                      <div className="pl-10 py-4 text-sm font-medium text-[#0B172B]/40 italic">
+                        No recorded history found for this item yet.
+                      </div>
+                    );
+                  }
+
+                  return relatedHistory.map(record => (
+                    <div key={record.id} className="relative pl-10 group">
+                      <div className="absolute left-0 top-1.5 w-[30px] h-[30px] bg-white rounded-full border-2 border-[#009965] flex items-center justify-center z-10 shadow-sm group-hover:scale-110 transition-transform">
+                        <FileText size={12} className="text-[#009965]" />
+                      </div>
+                      <div className="bg-[#F0F5F9]/30 rounded-xl p-4 border border-[#0B172B]/5">
+                        <div className="flex justify-between items-start gap-4 mb-2">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider bg-[#009965]/10 text-[#009965]">
+                            {record.type.replace(/_/g, ' ')}
+                          </span>
+                          <span className="text-xs font-mono font-medium text-[#0B172B]/40">
+                            {new Date(record.timestamp).toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="text-sm font-medium text-[#0B172B]">{record.desc}</p>
+                        {record.userName && (
+                          <div className="mt-3 text-xs font-bold text-[#0B172B]/50 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#0B172B]/30"></span>
+                            Action by: {record.userName}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </div>
+            </div>
+            
+            <div className="p-4 border-t border-[#0B172B]/8 bg-[#F0F5F9]/30 flex justify-end">
+              <button 
+                onClick={() => setSelectedLotForAudit(null)}
+                className="px-6 py-2.5 bg-[#0B172B] text-white rounded-xl text-sm font-bold shadow-md hover:bg-[#009965] transition-all"
+              >
+                Close Audit Trail
+              </button>
+            </div>
           </div>
         </div>
       )}

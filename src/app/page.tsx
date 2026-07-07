@@ -478,8 +478,9 @@ export default function App() {
   };
 
   const handleDeleteLooseItem = (id: string) => {
-    if (id === 'l-balance') {
-      triggerToast("Cannot delete the system loose tea ledger.", "error");
+    const systemIds = ['l-balance', 'l-orthodox', 'l-cardamom', 'l-cardamom-husk'];
+    if (systemIds.includes(id)) {
+      triggerToast("Cannot delete a system loose tea ledger.", "error");
       return;
     }
     setLooseInventory(prev => prev.filter(item => item.id !== id));
@@ -487,7 +488,8 @@ export default function App() {
   };
 
   const handlePurgeNilLooseStock = () => {
-    const nilLots = localLooseInventory.filter(item => item.id !== 'l-balance' && (item.bags <= 0 || item.weight <= 0));
+    const systemIds = ['l-balance', 'l-orthodox', 'l-cardamom', 'l-cardamom-husk'];
+    const nilLots = localLooseInventory.filter(item => !systemIds.includes(item.id) && (item.bags <= 0 || item.weight <= 0));
     if (nilLots.length === 0) {
       triggerToast("No NIL stock lots found to purge.", "error");
       return;
@@ -496,7 +498,7 @@ export default function App() {
       title: "Purge All NIL Stock?",
       message: `Are you sure you want to permanently delete all ${nilLots.length} empty loose tea lots?`,
       onConfirm: () => {
-        setLooseInventory(prev => prev.filter(item => item.id === 'l-balance' || (item.bags > 0 && item.weight > 0)));
+        setLooseInventory(prev => prev.filter(item => systemIds.includes(item.id) || (item.bags > 0 && item.weight > 0)));
         triggerToast(`Successfully purged ${nilLots.length} NIL stock lots.`);
       }
     });
@@ -868,6 +870,7 @@ export default function App() {
                 setLooseInventory={setLooseInventory}
                 packetCatalog={localPacketCatalog} 
                 setPacketCatalog={setPacketCatalog}
+                historyList={localHistoryList}
                 onDeleteLoose={handleDeleteLooseItem} 
                 onPurgeNilLoose={handlePurgeNilLooseStock}
                 onEditLooseItem={handleEditLooseItem}

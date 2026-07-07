@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { 
-  Boxes, ArrowRight, TrendingDown, Trash2, 
+  Boxes, ArrowRight, TrendingDown, Trash2, Search,
   Plus, Combine, Settings2, Check, Printer, Edit2, Copy
 } from 'lucide-react';
 import { BlendProcess, CatalogProduct, LooseLot, HistoryRecord } from '@/types';
@@ -104,6 +104,16 @@ export default function ProcessModule({
     { productId: '', quantity: '' }
   ]);
   const [returnedLooseWeight, setReturnedLooseWeight] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredUnderProcess = useMemo(() => {
+    if (!searchQuery.trim()) return underProcess;
+    const q = searchQuery.toLowerCase();
+    return underProcess.filter(b => 
+      b.blendName.toLowerCase().includes(q) || 
+      b.batchNo.toLowerCase().includes(q)
+    );
+  }, [underProcess, searchQuery]);
 
   const toggleMergeSelect = (id: string) => {
     if (selectedForMerge.includes(id)) {
@@ -465,14 +475,29 @@ export default function ProcessModule({
 
       <div className="border-b border-[#0B172B]/8 pb-4 mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white px-6 -mx-6 -mt-6 pt-6 rounded-t-2xl">
         <div>
-          <h2 className="text-xl font-bold text-[#0B172B]">Under Process Blends</h2>
-          <p className="text-xs text-[#0B172B]/55">Track and merge active batches, or final-pack them into your fixed packet master inventory catalogs.</p>
+          <h2 className="text-xl font-bold text-[#0B172B]">In-Process Blends</h2>
+          <p className="text-sm text-[#0B172B]/55">Manage and track blends currently being processed</p>
         </div>
-        {selectedForMerge.length > 1 && systemUser.role !== 'user' && (
-          <button onClick={handleMerge} className="bg-[#0B172B] hover:bg-[#009965] text-white px-4 py-2.5 rounded-xl flex items-center gap-2 font-semibold text-xs transition-all w-full sm:w-auto justify-center">
-            <Combine size={16} /> Merge Selected Processes ({selectedForMerge.length})
-          </button>
-        )}
+        <div className="flex gap-2 w-full sm:w-auto">
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#0B172B]/40" size={16} />
+            <input 
+              type="text" 
+              placeholder="Search by name or batch..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 bg-white border border-[#0B172B]/10 rounded-xl focus:border-[#009965] outline-none text-sm shadow-sm transition-all"
+            />
+          </div>
+          {systemUser.role !== 'user' && selectedForMerge.length > 1 && (
+            <button 
+              onClick={handleMerge}
+              className="px-4 py-2 bg-[#0B172B] text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#009965] transition-all shadow-sm shrink-0"
+            >
+              <Combine size={16} /> Merge ({selectedForMerge.length})
+            </button>
+          )}
+        </div>
       </div>
 
       {underProcess.length === 0 ? (
@@ -482,8 +507,8 @@ export default function ProcessModule({
           <p className="text-xs mt-1">Book a new blend on the 'Blend Management' tab to populate this list.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 overflow-auto">
-          {underProcess.map(blend => (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          {filteredUnderProcess.map(blend => (
             <div key={blend.id} className={`border rounded-xl p-5 transition-all duration-300 relative ${selectedForMerge.includes(blend.id) ? 'border-[#009965] bg-[#009965]/5' : 'border-[#0B172B]/8 bg-white hover:bg-[#F0F5F9]/50 shadow-sm'}`}>
               
               <div className="flex justify-between items-start mb-4 gap-2">
