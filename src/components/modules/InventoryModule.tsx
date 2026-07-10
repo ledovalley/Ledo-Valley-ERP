@@ -1203,30 +1203,51 @@ export default function InventoryModule({
                     );
                   }
 
-                  return relatedHistory.map(record => (
-                    <div key={record.id} className="relative pl-10 group">
-                      <div className="absolute left-0 top-1.5 w-[30px] h-[30px] bg-white rounded-full border-2 border-[#009965] flex items-center justify-center z-10 shadow-sm group-hover:scale-110 transition-transform">
-                        <FileText size={12} className="text-[#009965]" />
-                      </div>
-                      <div className="bg-[#F0F5F9]/30 rounded-xl p-4 border border-[#0B172B]/5">
-                        <div className="flex justify-between items-start gap-4 mb-2">
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider bg-[#009965]/10 text-[#009965]">
-                            {record.type.replace(/_/g, ' ')}
-                          </span>
-                          <span className="text-xs font-mono font-medium text-[#0B172B]/40">
-                            {new Date(record.timestamp).toLocaleString()}
-                          </span>
-                        </div>
-                        <p className="text-sm font-medium text-[#0B172B]">{record.desc}</p>
-                        {record.userName && (
-                          <div className="mt-3 text-xs font-bold text-[#0B172B]/50 flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#0B172B]/30"></span>
-                            Action by: {record.userName}
+                  return relatedHistory.map(record => {
+                    let bagsUsedDisplay = null;
+                    if (record.details?.lotsUsed && Array.isArray(record.details.lotsUsed)) {
+                      const lotUsage = record.details.lotsUsed.find((l: any) => l.lotId === queryId);
+                      if (lotUsage && lotUsage.bagsUsed) {
+                        bagsUsedDisplay = (
+                          <div className="mt-2 text-xs font-bold text-amber-700 bg-amber-50 inline-block px-2 py-1 rounded border border-amber-200">
+                            Bags Used: {lotUsage.bagsUsed}
                           </div>
-                        )}
+                        );
+                      }
+                    } else if (record.details?.bags) {
+                      bagsUsedDisplay = (
+                        <div className="mt-2 text-xs font-bold text-[#009965] bg-[#009965]/10 inline-block px-2 py-1 rounded border border-[#009965]/20">
+                          Bags: {record.details.bags}
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div key={record.id} className="relative pl-10 group">
+                        <div className="absolute left-0 top-1.5 w-[30px] h-[30px] bg-white rounded-full border-2 border-[#009965] flex items-center justify-center z-10 shadow-sm group-hover:scale-110 transition-transform">
+                          <FileText size={12} className="text-[#009965]" />
+                        </div>
+                        <div className="bg-[#F0F5F9]/30 rounded-xl p-4 border border-[#0B172B]/5">
+                          <div className="flex justify-between items-start gap-4 mb-2">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider bg-[#009965]/10 text-[#009965]">
+                              {record.type.replace(/_/g, ' ')}
+                            </span>
+                            <span className="text-xs font-mono font-medium text-[#0B172B]/40">
+                              {new Date(record.timestamp).toLocaleString()}
+                            </span>
+                          </div>
+                          <p className="text-sm font-medium text-[#0B172B]">{record.desc}</p>
+                          {bagsUsedDisplay}
+                          {record.userName && (
+                            <div className="mt-3 text-xs font-bold text-[#0B172B]/50 flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#0B172B]/30"></span>
+                              Action by: {record.userName}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ));
+                    );
+                  });
                 })()}
               </div>
             </div>

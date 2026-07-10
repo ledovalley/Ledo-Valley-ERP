@@ -65,9 +65,14 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
         const inputQty = h.details.totalQuantity || 0;
         const outputQty = h.details.totalOutputQuantity || 0;
         const returnedLoose = h.details.returnedLooseWeight || 0;
-        totalVariance += (inputQty - outputQty - returnedLoose);
-
+        
+        // As requested by client: Zero out historical variance to start fresh for new stock. 
+        // Only track variance for processes completed on or after July 10, 2026.
         const d = h.details.completedDate;
+        if (d && d >= '2026-07-10') {
+          totalVariance += (inputQty - outputQty - returnedLoose);
+        }
+
         if (d) {
           if (!minDate || d < minDate) minDate = d;
           if (!maxDate || d > maxDate) maxDate = d;
