@@ -201,6 +201,30 @@ export default function BlendModule({
     setShowPreviewModal(false);
     const finalBatchNo = `BLEND-LV-${batchNo}`;
 
+    let finalBlendName = blendName.trim();
+    if (!/\|\s*SL-\d+$/.test(finalBlendName)) {
+      let maxSerial = 0;
+      
+      const extractSerial = (name: string) => {
+        if (!name) return;
+        const match = name.match(/\|\s*SL-(\d+)$/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (num > maxSerial) maxSerial = num;
+        }
+      };
+
+      underProcess.forEach(b => extractSerial(b.blendName));
+      historyList.forEach(h => {
+        if (h.details && h.details.blendName) {
+          extractSerial(h.details.blendName);
+        }
+      });
+
+      const nextSL = `SL-${(maxSerial + 1).toString().padStart(2, '0')}`;
+      finalBlendName = `${finalBlendName} | ${nextSL}`;
+    }
+
     const lotsUsedArray = Object.keys(selectedLots).map(id => {
       const l = looseInventory.find(i => i.id === id);
       if (!l) return null;
@@ -218,7 +242,7 @@ export default function BlendModule({
 
     const newBlend: BlendProcess = {
       id: editedBlendId || 'BLD-' + Date.now().toString().slice(-6),
-      blendName,
+      blendName: finalBlendName,
       batchNo: finalBatchNo,
       totalQuantity: totalBlendWeight,
       status: 'PENDING',
@@ -270,17 +294,17 @@ export default function BlendModule({
       id: `HST-${Date.now()}`,
       type: editedBlendId ? 'BLEND_UPDATED' : 'BLEND_INITIATED',
       desc: editedBlendId 
-        ? `Updated blend instruction: ${blendName} (${finalBatchNo}).` 
-        : `Initiated blend instruction: ${blendName} (${finalBatchNo}) for ${totalBlendWeight.toFixed(2)} kg.`,
+        ? `Updated blend instruction: ${finalBlendName} (${finalBatchNo}).` 
+        : `Initiated blend instruction: ${finalBlendName} (${finalBatchNo}) for ${totalBlendWeight.toFixed(2)} kg.`,
       timestamp: new Date().toISOString(),
       details: newBlend
     };
     setHistoryList((prev: any) => [creationHistory, ...prev]);
 
     if (editedBlendId) {
-      logSystemAction('EDIT_BLEND', `Re-submitted edited blend: ${blendName} for ${totalBlendWeight.toFixed(2)} kg`);
+      logSystemAction('EDIT_BLEND', `Re-submitted edited blend: ${finalBlendName} for ${totalBlendWeight.toFixed(2)} kg`);
     } else {
-      logSystemAction('CREATE_BLEND', `Created new blend: ${blendName} for ${totalBlendWeight.toFixed(2)} kg`);
+      logSystemAction('CREATE_BLEND', `Created new blend: ${finalBlendName} for ${totalBlendWeight.toFixed(2)} kg`);
     }
 
     triggerToast(editedBlendId ? `Blend [${newBlend.id}] successfully updated!` : `Blend [${newBlend.id}] created and sent to printer.`);

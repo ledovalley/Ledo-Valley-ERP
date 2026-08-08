@@ -30,11 +30,13 @@ import ConfirmModal from '@/components/ui/ConfirmModal';
 import DeleteModal from '@/components/ui/DeleteModal';
 import Login from '@/components/Login';
 import UserManagementModule from '../components/modules/UserManagementModule';
+import MissingBlendsModule from '../components/modules/MissingBlendsModule';
 import Sidebar from '@/components/Sidebar';
 import Topbar from '@/components/Topbar';
 
 
 import { 
+  AlertTriangle,
   PackagePlus, 
   Warehouse, 
   Coffee, 
@@ -159,26 +161,18 @@ export default function App() {
 
   // --- Cloud Synchronized Setters ---
   const setPacketCatalog = async (newValOrUpdater: CatalogProduct[] | ((prev: CatalogProduct[]) => CatalogProduct[])) => {
-    let capturedPrev: CatalogProduct[] = [];
+    let newVal: CatalogProduct[] = [];
     setLocalPacketCatalog(prev => {
-      capturedPrev = prev;
-      return typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      return newVal;
     });
     if (auth && user) {
       pendingCloudWrites++;
       const docRef = doc(db, 'artifacts', appId, 'globalData', 'catalog');
       try {
-        await runTransaction(db, async (transaction) => {
-          const docSnap = await transaction.get(docRef);
-          let currentList: CatalogProduct[] = [];
-          if (docSnap.exists() && docSnap.data().items) currentList = docSnap.data().items;
-          const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(currentList) : newValOrUpdater;
-          transaction.set(docRef, { items: newVal });
-        });
+        await setDoc(docRef, { items: newVal });
       } catch (error) { 
-        console.error("Transaction failed on setPacketCatalog: ", error);
-        alert("Network Sync Error: Failed to save changes to the cloud. Your action has been reverted. Please check your connection and try again.");
-        setLocalPacketCatalog(capturedPrev);
+        console.error("Sync failed for setPacketCatalog: ", error);
       } finally {
         pendingCloudWrites--;
       }
@@ -186,26 +180,18 @@ export default function App() {
   };
 
   const setLooseInventory = async (newValOrUpdater: LooseLot[] | ((prev: LooseLot[]) => LooseLot[])) => {
-    let capturedPrev: LooseLot[] = [];
+    let newVal: LooseLot[] = [];
     setLocalLooseInventory(prev => {
-      capturedPrev = prev;
-      return typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      return newVal;
     });
     if (auth && user) {
       pendingCloudWrites++;
       const docRef = doc(db, 'artifacts', appId, 'globalData', 'loose');
       try {
-        await runTransaction(db, async (transaction) => {
-          const docSnap = await transaction.get(docRef);
-          let currentList: LooseLot[] = [];
-          if (docSnap.exists() && docSnap.data().items) currentList = docSnap.data().items;
-          const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(currentList) : newValOrUpdater;
-          transaction.set(docRef, { items: newVal });
-        });
+        await setDoc(docRef, { items: newVal });
       } catch (error) { 
-        console.error("Transaction failed on setLooseInventory: ", error);
-        alert("Network Sync Error: Failed to save changes to the cloud. Your action has been reverted. Please check your connection and try again.");
-        setLocalLooseInventory(capturedPrev);
+        console.error("Sync failed for setLooseInventory: ", error);
       } finally {
         pendingCloudWrites--;
       }
@@ -213,26 +199,18 @@ export default function App() {
   };
 
   const setUnderProcess = async (newValOrUpdater: BlendProcess[] | ((prev: BlendProcess[]) => BlendProcess[])) => {
-    let capturedPrev: BlendProcess[] = [];
+    let newVal: BlendProcess[] = [];
     setLocalUnderProcess(prev => {
-      capturedPrev = prev;
-      return typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      return newVal;
     });
     if (auth && user) {
       pendingCloudWrites++;
       const docRef = doc(db, 'artifacts', appId, 'globalData', 'process');
       try {
-        await runTransaction(db, async (transaction) => {
-          const docSnap = await transaction.get(docRef);
-          let currentList: BlendProcess[] = [];
-          if (docSnap.exists() && docSnap.data().items) currentList = docSnap.data().items;
-          const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(currentList) : newValOrUpdater;
-          transaction.set(docRef, { items: newVal });
-        });
+        await setDoc(docRef, { items: newVal });
       } catch (error) { 
-        console.error("Transaction failed on setUnderProcess: ", error);
-        alert("Network Sync Error: Failed to save changes to the cloud. Your action has been reverted. Please check your connection and try again.");
-        setLocalUnderProcess(capturedPrev);
+        console.error("Sync failed for setUnderProcess: ", error);
       } finally {
         pendingCloudWrites--;
       }
@@ -242,28 +220,20 @@ export default function App() {
   const setHistoryList = async (newValOrUpdater: HistoryRecord[] | ((prev: HistoryRecord[]) => HistoryRecord[])) => {
     const enrich = (val: HistoryRecord[]) => val.map(record => (!record.userId && systemUser) ? { ...record, userId: systemUser.userId, userName: systemUser.name } : record);
     
-    let capturedPrev: HistoryRecord[] = [];
+    let newVal: HistoryRecord[] = [];
     setLocalHistoryList(prev => {
-      capturedPrev = prev;
-      const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
-      return enrich(newVal);
+      const computedVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      newVal = enrich(computedVal);
+      return newVal;
     });
     
     if (auth && user) {
       pendingCloudWrites++;
       const docRef = doc(db, 'artifacts', appId, 'globalData', 'history');
       try {
-        await runTransaction(db, async (transaction) => {
-          const docSnap = await transaction.get(docRef);
-          let currentList: HistoryRecord[] = [];
-          if (docSnap.exists() && docSnap.data().items) currentList = docSnap.data().items;
-          const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(currentList) : newValOrUpdater;
-          transaction.set(docRef, { items: enrich(newVal) });
-        });
+        await setDoc(docRef, { items: newVal });
       } catch (error) { 
-        console.error("Transaction failed on setHistoryList: ", error);
-        alert("Network Sync Error: Failed to save changes to the cloud. Your action has been reverted. Please check your connection and try again.");
-        setLocalHistoryList(capturedPrev);
+        console.error("Sync failed for setHistoryList: ", error);
       } finally {
         pendingCloudWrites--;
       }
@@ -716,12 +686,46 @@ export default function App() {
     );
   }
 
-  const navItems = [
+  const navItems: { id: string; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'inventory', label: 'Inventory & Receiving', icon: <Warehouse size={20} /> },
     { id: 'blend', label: 'Blend Management', icon: <Coffee size={20} /> },
     { id: 'process', label: 'Under Process', icon: <Settings2 size={20} /> },
     { id: 'history', label: 'History / Records', icon: <History size={20} /> },
   ];
+
+  const missingBlends: string[] = (() => {
+    let maxSerial = 0;
+    const serialsFound = new Set<number>();
+    
+    const extractSerial = (name: string) => {
+      if (!name) return;
+      const match = name.match(/\|\s*SL-(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        serialsFound.add(num);
+        if (num > maxSerial) maxSerial = num;
+      }
+    };
+
+    localUnderProcess.forEach(b => extractSerial(b.blendName));
+    localHistoryList.forEach(h => {
+      if (h.details && h.details.blendName) {
+        extractSerial(h.details.blendName);
+      }
+    });
+
+    const missing: string[] = [];
+    for (let i = 1; i <= maxSerial; i++) {
+      if (!serialsFound.has(i)) {
+        missing.push(`SL-${i.toString().padStart(2, '0')}`);
+      }
+    }
+    return missing;
+  })();
+
+  if (systemUser.role === 'super_admin' || systemUser.role === 'manager') {
+    navItems.push({ id: 'missing_blends', label: 'Missing Blends', icon: <AlertTriangle size={20} />, badge: missingBlends.length });
+  }
 
   if (systemUser.role === 'super_admin') {
     navItems.push({ id: 'users', label: 'User Management', icon: <Shield size={20} /> });
@@ -772,7 +776,7 @@ export default function App() {
         </div>
       )}
 
-      {showBackupReminder && systemUser.role === 'super_admin' && (
+      {showBackupReminder && (systemUser.role === 'super_admin' || systemUser.role === 'manager') && (
         <div className="fixed top-20 right-4 z-40 bg-white p-4 rounded-xl shadow-2xl border border-amber-200 animate-slide-in flex flex-col gap-3 max-w-[320px]">
           <div className="flex items-start gap-3">
             <div className="bg-amber-100 p-2 rounded-full shrink-0">
@@ -939,6 +943,11 @@ export default function App() {
               <AuditLogsModule
                 auditLogs={localAuditLogs}
                 systemUser={systemUser}
+              />
+            )}
+            {activeTab === 'missing_blends' && (systemUser.role === 'super_admin' || systemUser.role === 'manager') && (
+              <MissingBlendsModule
+                missingBlends={missingBlends}
               />
             )}
           </div>

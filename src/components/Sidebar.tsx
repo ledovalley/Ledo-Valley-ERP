@@ -10,7 +10,7 @@ interface SidebarProps {
   setIsMobileMenuOpen: (open: boolean) => void;
   activeTab: string;
   setActiveTab: (tab: string) => void;
-  navItems: { id: string; label: string; icon: React.ReactNode }[];
+  navItems: { id: string; label: string; icon: React.ReactNode; badge?: number }[];
   systemUser: SystemUser;
   setShowBackupModal: (open: boolean) => void;
 }
@@ -113,19 +113,33 @@ export default function Sidebar({
                       {item.icon}
                     </div>
 
-                    <div className="min-w-0 flex-1">
-                      <span
-                        className={`block truncate text-[14px] ${isActive ? 'font-semibold' : 'font-medium'
-                          }`}
-                      >
-                        {item.label}
-                      </span>
-                      <span
-                        className={`mt-0.5 block text-[11px] ${isActive ? 'text-[#0B172B]/55' : 'text-[#F0F5F9]/40'
-                          }`}
-                      >
-                        Workspace section
-                      </span>
+                    <div className="min-w-0 flex-1 flex items-center justify-between">
+                      <div>
+                        <span
+                          className={`block truncate text-[14px] ${isActive ? 'font-semibold' : 'font-medium'
+                            }`}
+                        >
+                          {item.label}
+                        </span>
+                        <span
+                          className={`mt-0.5 block text-[11px] ${isActive ? 'text-[#0B172B]/55' : 'text-[#F0F5F9]/40'
+                            }`}
+                        >
+                          {item.id === 'dashboard' ? 'Overview' :
+                           item.id === 'inventory' ? 'Stock ledger' :
+                           item.id === 'blend' ? 'Formulations' :
+                           item.id === 'process' ? 'Active runs' :
+                           item.id === 'history' ? 'Audit trails' :
+                           item.id === 'users' ? 'Access control' :
+                           item.id === 'audit' ? 'System logs' :
+                           item.id === 'missing_blends' ? 'Gap analysis' : ''}
+                        </span>
+                      </div>
+                      {item.badge && item.badge > 0 ? (
+                        <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold shadow-sm ${isActive ? 'bg-[#009965] text-white' : 'bg-rose-500 text-white'}`}>
+                          {item.badge}
+                        </div>
+                      ) : null}
                     </div>
 
                     <ChevronRight
@@ -142,7 +156,7 @@ export default function Sidebar({
           </div>
 
           <div className="px-4 pb-4 mt-auto">
-            {systemUser.role === 'super_admin' && (
+            {(systemUser.role === 'super_admin' || systemUser.role === 'manager') && (
               <button
                 onClick={() => setShowBackupModal(true)}
                 className="w-full rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 p-3 flex items-center justify-between transition-colors shadow-sm"
