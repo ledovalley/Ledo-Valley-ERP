@@ -254,7 +254,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                         <span className="text-xs text-[#0B172B]/55 mb-2">{l.mark}</span>
                         <div className="mt-auto flex justify-between items-center pt-2 border-t border-[#0B172B]/8">
                           <span className="text-[10px] text-[#0B172B]/40 uppercase font-bold">Input</span>
-                          <span className="font-mono font-semibold text-[#009965]">{l.weightUsed.toFixed(2)} kg</span>
+                          <span className="font-mono font-semibold text-[#009965]">{(l.weightUsed ?? 0).toFixed(2)} kg</span>
                         </div>
                       </div>
                     ))}
@@ -375,7 +375,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                         {record.type === 'LEDGER_ADJUSTMENT' ? (
                           <div className="space-y-1">
                             <div className="text-xs text-[#0B172B]/70 font-mono">
-                              • Variance/Correction: <span className={details.amount > 0 ? "text-[#009965] font-bold" : "text-rose-500 font-bold"}>{details.amount > 0 ? '+' : ''}{details.amount?.toFixed(2)} kg</span>
+                              • Variance/Correction: <span className={details.amount > 0 ? "text-[#009965] font-bold" : "text-rose-500 font-bold"}>{details.amount > 0 ? '+' : ''}{(details.amount ?? 0).toFixed(2)} kg</span>
                             </div>
                             <div className="text-xs text-[#0B172B] mt-2 italic font-sans border-t border-[#0B172B]/8 pt-1">
                               Reason: {details.reason}
@@ -388,16 +388,16 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                                 <div key={i} className="text-xs text-[#0B172B]/70 font-mono">
                                   • {l.lotNumber} ({l.mark}):
                                   {l.bagsUsed === '-' ? (
-                                    <> <span className="font-semibold text-[#0B172B]">System Balance</span> ({l.weightUsed.toFixed(1)}kg)</>
+                                    <> <span className="font-semibold text-[#0B172B]">System Balance</span> ({(l.weightUsed ?? 0).toFixed(1)}kg)</>
                                   ) : (
-                                    <> <span className="font-semibold text-[#0B172B]">{l.bagsUsed} bags</span> ({l.weightUsed.toFixed(1)}kg)</>
+                                    <> <span className="font-semibold text-[#0B172B]">{l.bagsUsed} bags</span> ({(l.weightUsed ?? 0).toFixed(1)}kg)</>
                                   )}
                                 </div>
                               ))}
                             </div>
-                            {details.totalQuantity !== undefined && (
+                            {details.totalQuantity != null && (
                               <div className="text-xs font-bold text-[#0B172B] mt-2 pt-1 border-t border-[#0B172B]/8 font-mono">
-                                Total Input: {details.totalQuantity.toFixed(1)} kg
+                                Total Input: {(details.totalQuantity ?? 0).toFixed(1)} kg
                               </div>
                             )}
                           </>
@@ -409,7 +409,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                           <div className="space-y-1">
                             {details.producedItems.map((p: any, idx: number) => (
                               <div key={idx} className="text-xs text-[#004825] font-semibold">
-                                ✓ {p.productName}: <span className="font-mono text-[#0B172B]">{Number.isInteger(p.quantity) ? p.quantity : parseFloat(p.quantity.toString()).toFixed(3)} {p.unit}(s)</span> ({p.totalWeight.toFixed(1)}kg)
+                                ✓ {p.productName}: <span className="font-mono text-[#0B172B]">{Number.isInteger(p.quantity) ? p.quantity : parseFloat(p.quantity.toString()).toFixed(3)} {p.unit}(s)</span> ({(p.totalWeight ?? 0).toFixed(1)}kg)
                               </div>
                             ))}
 

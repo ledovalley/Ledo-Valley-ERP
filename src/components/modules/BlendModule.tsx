@@ -197,10 +197,7 @@ export default function BlendModule({
     setShowPreviewModal(true);
   };
 
-  const confirmSubmitBlend = () => {
-    setShowPreviewModal(false);
-    const finalBatchNo = `BLEND-LV-${batchNo}`;
-
+  const getGeneratedBlendName = () => {
     let finalBlendName = blendName.trim();
     if (!/\|\s*SL-\d+$/.test(finalBlendName)) {
       let maxSerial = 0;
@@ -224,6 +221,14 @@ export default function BlendModule({
       const nextSL = `SL-${(maxSerial + 1).toString().padStart(2, '0')}`;
       finalBlendName = `${finalBlendName} | ${nextSL}`;
     }
+    return finalBlendName;
+  };
+
+  const confirmSubmitBlend = () => {
+    setShowPreviewModal(false);
+    const finalBatchNo = `BLEND-LV-${batchNo}`;
+
+    const finalBlendName = getGeneratedBlendName();
 
     const lotsUsedArray = Object.keys(selectedLots).map(id => {
       const l = looseInventory.find(i => i.id === id);
@@ -363,7 +368,7 @@ export default function BlendModule({
                 <div className="grid grid-cols-2 gap-6">
                   <div>
                     <span className="block text-[10px] font-bold text-[#0B172B]/50 uppercase tracking-widest mb-1">Target Blend Name</span>
-                    <span className="text-lg font-bold text-[#0B172B]">{blendName}</span>
+                    <span className="text-lg font-bold text-[#0B172B]">{getGeneratedBlendName()}</span>
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-[#0B172B]/50 uppercase tracking-widest mb-1">Batch Code</span>
