@@ -9,7 +9,7 @@ import HistoryModule from "@/components/modules/HistoryModule";
 import AuditLogsModule from "@/components/modules/AuditLogsModule";
 
 import { signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc, getDoc, getDocs, query, orderBy, deleteDoc, runTransaction } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, getDocs, query, orderBy, deleteDoc, runTransaction, writeBatch } from 'firebase/firestore';
 
 // Import our local initialized Firebase instances
 import { auth, db } from '../lib/firebase';
@@ -144,15 +144,9 @@ export default function App() {
     setLocalAuditLogs(prev => [newLog, ...prev]);
 
     if (auth && user) {
-      const docRef = doc(db, 'artifacts', appId, 'systemData', 'audit_logs');
+      const docRef = doc(db, 'artifacts', appId, 'auditLogsList', newLog.id);
       try {
-        await runTransaction(db, async (transaction) => {
-          const docSnap = await transaction.get(docRef);
-          let currentList: AuditLog[] = [];
-          if (docSnap.exists() && docSnap.data().items) currentList = docSnap.data().items;
-          const updatedList = [newLog, ...currentList].slice(0, 1000); // Keep max 1000 logs
-          transaction.set(docRef, { items: updatedList });
-        });
+        await setDoc(docRef, newLog);
       } catch (error) { 
         console.error("Failed to write audit log: ", error);
       }
@@ -161,11 +155,14 @@ export default function App() {
 
   // --- Cloud Synchronized Setters ---
   const setPacketCatalog = async (newValOrUpdater: CatalogProduct[] | ((prev: CatalogProduct[]) => CatalogProduct[])) => {
-    let newVal: CatalogProduct[] = [];
-    setLocalPacketCatalog(prev => {
-      newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
-      return newVal;
-    });
+    let newVal: CatalogProduct[];
+    if (typeof newValOrUpdater === 'function') {
+      newVal = newValOrUpdater(localPacketCatalog);
+    } else {
+      newVal = newValOrUpdater;
+    }
+    setLocalPacketCatalog(newVal);
+
     if (auth && user) {
       pendingCloudWrites++;
       const docRef = doc(db, 'artifacts', appId, 'globalData', 'catalog');
@@ -180,11 +177,14 @@ export default function App() {
   };
 
   const setLooseInventory = async (newValOrUpdater: LooseLot[] | ((prev: LooseLot[]) => LooseLot[])) => {
-    let newVal: LooseLot[] = [];
-    setLocalLooseInventory(prev => {
-      newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
-      return newVal;
-    });
+    let newVal: LooseLot[];
+    if (typeof newValOrUpdater === 'function') {
+      newVal = newValOrUpdater(localLooseInventory);
+    } else {
+      newVal = newValOrUpdater;
+    }
+    setLocalLooseInventory(newVal);
+
     if (auth && user) {
       pendingCloudWrites++;
       const docRef = doc(db, 'artifacts', appId, 'globalData', 'loose');
@@ -199,11 +199,14 @@ export default function App() {
   };
 
   const setUnderProcess = async (newValOrUpdater: BlendProcess[] | ((prev: BlendProcess[]) => BlendProcess[])) => {
-    let newVal: BlendProcess[] = [];
-    setLocalUnderProcess(prev => {
-      newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
-      return newVal;
-    });
+    let newVal: BlendProcess[];
+    if (typeof newValOrUpdater === 'function') {
+      newVal = newValOrUpdater(localUnderProcess);
+    } else {
+      newVal = newValOrUpdater;
+    }
+    setLocalUnderProcess(newVal);
+
     if (auth && user) {
       pendingCloudWrites++;
       const docRef = doc(db, 'artifacts', appId, 'globalData', 'process');
@@ -220,18 +223,48 @@ export default function App() {
   const setHistoryList = async (newValOrUpdater: HistoryRecord[] | ((prev: HistoryRecord[]) => HistoryRecord[])) => {
     const enrich = (val: HistoryRecord[]) => val.map(record => (!record.userId && systemUser) ? { ...record, userId: systemUser.userId, userName: systemUser.name } : record);
     
-    let newVal: HistoryRecord[] = [];
-    setLocalHistoryList(prev => {
-      const computedVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
-      newVal = enrich(computedVal);
-      return newVal;
-    });
+    let computedVal: HistoryRecord[];
+    if (typeof newValOrUpdater === 'function') {
+      computedVal = newValOrUpdater(localHistoryList);
+    } else {
+      computedVal = newValOrUpdater;
+    }
+    
+    const newVal = enrich(computedVal);
+    setLocalHistoryList(newVal);
     
     if (auth && user) {
       pendingCloudWrites++;
-      const docRef = doc(db, 'artifacts', appId, 'globalData', 'history');
       try {
-        await setDoc(docRef, { items: newVal });
+        const batch = writeBatch(db);
+        const oldIds = new Set(localHistoryList.map(h => h.id));
+        const newIds = new Set(newVal.map(h => h.id));
+        
+        let batchCount = 0;
+        
+        newVal.forEach(record => {
+          if (!oldIds.has(record.id)) {
+            const docRef = doc(db, 'artifacts', appId, 'historyList', record.id);
+            batch.set(docRef, record);
+            batchCount++;
+          }
+        });
+        
+        localHistoryList.forEach(record => {
+          if (!newIds.has(record.id)) {
+            const docRef = doc(db, 'artifacts', appId, 'historyList', record.id);
+            batch.delete(docRef);
+            batchCount++;
+          }
+        });
+
+        if (batchCount > 0) {
+          if (batchCount <= 500) {
+            await batch.commit();
+          } else {
+            console.error("Too many writes for a single batch!");
+          }
+        }
       } catch (error) { 
         console.error("Sync failed for setHistoryList: ", error);
       } finally {
@@ -276,18 +309,65 @@ export default function App() {
       return;
     }
     
+    // Listen to history subcollection separately
+    const histRef = collection(db, 'artifacts', appId, 'historyList');
+    const unsubscribeHist = onSnapshot(histRef, (snapshot) => {
+      const hList: HistoryRecord[] = [];
+      snapshot.forEach(d => {
+        hList.push(d.data() as HistoryRecord);
+      });
+      hList.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setLocalHistoryList(hList);
+    });
+
     const collRef = collection(db, 'artifacts', appId, 'globalData');
     const unsubscribe = onSnapshot(collRef, (snapshot) => {
       let loadedCatalog: CatalogProduct[] | null = null;
       let loadedLoose: LooseLot[] | null = null;
       let loadedProcess: BlendProcess[] | null = null;
-      let loadedHistory: HistoryRecord[] | null = null;
       
       snapshot.forEach(d => {
-        if (d.id === 'catalog') loadedCatalog = d.data().items;
-        if (d.id === 'loose') loadedLoose = d.data().items;
-        if (d.id === 'process') loadedProcess = d.data().items;
-        if (d.id === 'history') loadedHistory = d.data().items;
+        const data = d.data();
+        
+        const extract = (dData: any): any[] | null => {
+          if (Array.isArray(dData.items)) {
+             return dData.items;
+          }
+          return null;
+        };
+
+        if (d.id === 'catalog') loadedCatalog = extract(data);
+        if (d.id === 'loose') loadedLoose = extract(data);
+        if (d.id === 'process') loadedProcess = extract(data);
+        
+        // Handle migration from legacy history doc
+        if (d.id === 'history') {
+           const legacyHistory = extract(data);
+           if (legacyHistory && legacyHistory.length > 0) {
+             console.log("Migrating legacy history to subcollection...");
+             const migrate = async () => {
+               try {
+                 for (let i = 0; i < legacyHistory.length; i += 500) {
+                   const chunk = legacyHistory.slice(i, i + 500);
+                   const batch = writeBatch(db);
+                   chunk.forEach((record: any) => {
+                     const recId = record.id || `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                     const docRef = doc(db, 'artifacts', appId, 'historyList', recId);
+                     batch.set(docRef, { ...record, id: recId });
+                   });
+                   await batch.commit();
+                 }
+                 await deleteDoc(doc(db, 'artifacts', appId, 'globalData', 'history'));
+                 console.log("Migration complete!");
+               } catch (e) {
+                 console.error("Migration failed:", e);
+               }
+             };
+             migrate();
+           } else if (legacyHistory && legacyHistory.length === 0) {
+             deleteDoc(doc(db, 'artifacts', appId, 'globalData', 'history'));
+           }
+        }
       });
 
       if (loadedLoose) {
@@ -327,36 +407,61 @@ export default function App() {
         setDoc(doc(db, 'artifacts', appId, 'globalData', 'process'), { items: [] });
         loadedProcess = [];
       }
-      if (!loadedHistory) {
-        setDoc(doc(db, 'artifacts', appId, 'globalData', 'history'), { items: [] });
-        loadedHistory = [];
-      }
-
 
       if (loadedCatalog !== null) setLocalPacketCatalog(loadedCatalog);
       if (loadedLoose !== null) setLocalLooseInventory(loadedLoose);
       if (loadedProcess !== null) setLocalUnderProcess(loadedProcess);
-      if (loadedHistory !== null) setLocalHistoryList(loadedHistory);
       setIsDataLoaded(true);
     }, (error) => {
       console.error("Firestore error:", error);
     });
-    return () => unsubscribe();
-  }, [user, systemUser]);
+    return () => { unsubscribe(); unsubscribeHist(); };
+  }, [auth, user, systemUser]);
 
   // 2.5 Audit Logs Listener (Admin Only)
   useEffect(() => {
     if (!auth || !user || !systemUser || systemUser.role !== 'super_admin') return;
-    const docRef = doc(db, 'artifacts', appId, 'systemData', 'audit_logs');
-    const unsubscribe = onSnapshot(docRef, (docSnap) => {
-      if (docSnap.exists() && docSnap.data().items) {
-        setLocalAuditLogs(docSnap.data().items);
-      }
+    
+    const logsRef = collection(db, 'artifacts', appId, 'auditLogsList');
+    const unsubscribe = onSnapshot(logsRef, (snapshot) => {
+      const logs: AuditLog[] = [];
+      snapshot.forEach(d => logs.push(d.data() as AuditLog));
+      logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setLocalAuditLogs(logs.slice(0, 1000));
     }, (error) => {
       console.error("Audit log sync error:", error);
     });
+
+    // Auto-migration for legacy audit_logs doc
+    const legacyRef = doc(db, 'artifacts', appId, 'systemData', 'audit_logs');
+    getDoc(legacyRef).then(docSnap => {
+      if (docSnap.exists() && docSnap.data().items) {
+        const legacyItems = docSnap.data().items;
+        if (legacyItems.length > 0) {
+          console.log("Migrating legacy audit logs...");
+          const migrate = async () => {
+             for (let i = 0; i < legacyItems.length; i += 500) {
+               const chunk = legacyItems.slice(i, i + 500);
+               const batch = writeBatch(db);
+               chunk.forEach((record: any) => {
+                 const recId = record.id || `LOG-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                 const docRef = doc(db, 'artifacts', appId, 'auditLogsList', recId);
+                 batch.set(docRef, { ...record, id: recId });
+               });
+               await batch.commit();
+             }
+             await deleteDoc(legacyRef);
+             console.log("Audit Logs Migration complete!");
+          }
+          migrate();
+        } else {
+          deleteDoc(legacyRef);
+        }
+      }
+    });
+
     return () => unsubscribe();
-  }, [user, systemUser]);
+  }, [auth, user, systemUser]);
 
   // 3. Automated Backup Routine
   useEffect(() => {
@@ -649,15 +754,42 @@ export default function App() {
 
   const handleRestoreBackup = async (backup: any) => {
     if (confirm(`Are you absolutely sure you want to restore the system to ${backup.date}? All current data will be overwritten.`)) {
-      setLocalPacketCatalog(backup.catalog || []);
-      setLocalLooseInventory(backup.loose || []);
-      setLocalUnderProcess(backup.process || []);
-      setLocalHistoryList(backup.history || []);
       
-      await setDoc(doc(db, 'artifacts', appId, 'globalData', 'catalog'), { items: backup.catalog || [] });
-      await setDoc(doc(db, 'artifacts', appId, 'globalData', 'loose'), { items: backup.loose || [] });
-      await setDoc(doc(db, 'artifacts', appId, 'globalData', 'process'), { items: backup.process || [] });
-      await setDoc(doc(db, 'artifacts', appId, 'globalData', 'history'), { items: backup.history || [] });
+      const parsedCatalog = backup.catalog || [];
+      const parsedLoose = backup.loose || [];
+      const parsedProcess = backup.process || [];
+      const parsedHistory = backup.history || [];
+
+      setLocalPacketCatalog(parsedCatalog);
+      setLocalLooseInventory(parsedLoose);
+      setLocalUnderProcess(parsedProcess);
+      setLocalHistoryList(parsedHistory);
+      
+      await setDoc(doc(db, 'artifacts', appId, 'globalData', 'catalog'), { items: parsedCatalog });
+      await setDoc(doc(db, 'artifacts', appId, 'globalData', 'loose'), { items: parsedLoose });
+      await setDoc(doc(db, 'artifacts', appId, 'globalData', 'process'), { items: parsedProcess });
+      
+      // Clear and rewrite historyList subcollection
+      const histSnap = await getDocs(collection(db, 'artifacts', appId, 'historyList'));
+      for (let i = 0; i < histSnap.docs.length; i += 500) {
+         const chunk = histSnap.docs.slice(i, i + 500);
+         const batch = writeBatch(db);
+         chunk.forEach(d => batch.delete(d.ref));
+         await batch.commit();
+      }
+      
+      if (parsedHistory.length > 0) {
+        for (let i = 0; i < parsedHistory.length; i += 500) {
+          const chunk = parsedHistory.slice(i, i + 500);
+          const batch = writeBatch(db);
+          chunk.forEach((record: any) => {
+             const recId = record.id || `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+             const docRef = doc(db, 'artifacts', appId, 'historyList', recId);
+             batch.set(docRef, { ...record, id: recId });
+          });
+          await batch.commit();
+        }
+      }
       
       setShowBackupModal(false);
       triggerToast("System successfully restored from backup.");
