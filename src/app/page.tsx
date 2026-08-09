@@ -75,9 +75,22 @@ const appId = 'ledo-valley-erp'; // hardcoded app ID for now
 
 
 
+import * as LZStringObj from 'lz-string';
+const LZString = (LZStringObj as any).default || LZStringObj;
+
 declare global {
   var __initial_auth_token: string | undefined;
 }
+
+const decompressData = (compressed: string) => {
+  try {
+    if (!LZString || !LZString.decompressFromBase64) return null;
+    return JSON.parse(LZString.decompressFromBase64(compressed) || 'null');
+  } catch (e) {
+    console.error('Failed to decompress data', e);
+    return null;
+  }
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('inventory');
@@ -340,33 +353,10 @@ export default function App() {
         if (d.id === 'loose') loadedLoose = extract(data);
         if (d.id === 'process') loadedProcess = extract(data);
         
-        // Handle migration from legacy history doc
+        // History is now loaded separately from the historyList subcollection
         if (d.id === 'history') {
-           const legacyHistory = extract(data);
-           if (legacyHistory && legacyHistory.length > 0) {
-             console.log("Migrating legacy history to subcollection...");
-             const migrate = async () => {
-               try {
-                 for (let i = 0; i < legacyHistory.length; i += 500) {
-                   const chunk = legacyHistory.slice(i, i + 500);
-                   const batch = writeBatch(db);
-                   chunk.forEach((record: any) => {
-                     const recId = record.id || `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                     const docRef = doc(db, 'artifacts', appId, 'historyList', recId);
-                     batch.set(docRef, { ...record, id: recId });
-                   });
-                   await batch.commit();
-                 }
-                 await deleteDoc(doc(db, 'artifacts', appId, 'globalData', 'history'));
-                 console.log("Migration complete!");
-               } catch (e) {
-                 console.error("Migration failed:", e);
-               }
-             };
-             migrate();
-           } else if (legacyHistory && legacyHistory.length === 0) {
-             deleteDoc(doc(db, 'artifacts', appId, 'globalData', 'history'));
-           }
+           // We intentionally ignore the legacy history array here to prevent quota-burning migration loops.
+           // If they need to migrate, it should be done manually via a dedicated script.
         }
       });
 
@@ -432,33 +422,8 @@ export default function App() {
       console.error("Audit log sync error:", error);
     });
 
-    // Auto-migration for legacy audit_logs doc
-    const legacyRef = doc(db, 'artifacts', appId, 'systemData', 'audit_logs');
-    getDoc(legacyRef).then(docSnap => {
-      if (docSnap.exists() && docSnap.data().items) {
-        const legacyItems = docSnap.data().items;
-        if (legacyItems.length > 0) {
-          console.log("Migrating legacy audit logs...");
-          const migrate = async () => {
-             for (let i = 0; i < legacyItems.length; i += 500) {
-               const chunk = legacyItems.slice(i, i + 500);
-               const batch = writeBatch(db);
-               chunk.forEach((record: any) => {
-                 const recId = record.id || `LOG-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                 const docRef = doc(db, 'artifacts', appId, 'auditLogsList', recId);
-                 batch.set(docRef, { ...record, id: recId });
-               });
-               await batch.commit();
-             }
-             await deleteDoc(legacyRef);
-             console.log("Audit Logs Migration complete!");
-          }
-          migrate();
-        } else {
-          deleteDoc(legacyRef);
-        }
-      }
-    });
+    // Audit logs are now loaded directly from the subcollection.
+    // Legacy auto-migration removed to prevent quota exhaustion.
 
     return () => unsubscribe();
   }, [auth, user, systemUser]);
@@ -486,8 +451,17 @@ export default function App() {
             loose: localLooseInventory,
             catalog: localPacketCatalog,
             process: localUnderProcess,
-            history: localHistoryList
+            hasChunkedHistory: true
           });
+          
+          // Chunk and save history array to bypass 1MB limit
+          if (localHistoryList.length > 0) {
+            for (let i = 0; i < localHistoryList.length; i += 500) {
+              const chunk = localHistoryList.slice(i, i + 500);
+              const chunkRef = doc(db, 'artifacts', appId, 'backups', todayStr, 'historyChunks', `chunk_${i}`);
+              await setDoc(chunkRef, { items: chunk });
+            }
+          }
           
           // Prune old backups
           const backupsRef = collection(db, 'artifacts', appId, 'backups');
@@ -497,7 +471,14 @@ export default function App() {
           
           if (backups.length > 3) {
             for (let i = 3; i < backups.length; i++) {
-              await deleteDoc(backups[i].ref);
+              const oldBackupRef = backups[i].ref;
+              try {
+                const chunksSnap = await getDocs(collection(oldBackupRef, 'historyChunks'));
+                for(const chunkDoc of chunksSnap.docs) {
+                   await deleteDoc(chunkDoc.ref);
+                }
+              } catch (e) {}
+              await deleteDoc(oldBackupRef);
             }
           }
           console.log("Daily backup successfully completed.");
@@ -755,10 +736,27 @@ export default function App() {
   const handleRestoreBackup = async (backup: any) => {
     if (confirm(`Are you absolutely sure you want to restore the system to ${backup.date}? All current data will be overwritten.`)) {
       
-      const parsedCatalog = backup.catalog || [];
-      const parsedLoose = backup.loose || [];
-      const parsedProcess = backup.process || [];
-      const parsedHistory = backup.history || [];
+      const parsedCatalog = backup.isCompressed ? (decompressData(backup.catalog) || []) : (backup.catalog || []);
+      const parsedLoose = backup.isCompressed ? (decompressData(backup.loose) || []) : (backup.loose || []);
+      const parsedProcess = backup.isCompressed ? (decompressData(backup.process) || []) : (backup.process || []);
+      let parsedHistory = backup.isCompressed ? (decompressData(backup.history) || []) : (backup.history || []);
+
+      // Fetch chunked history if it exists
+      if (backup.hasChunkedHistory) {
+        try {
+          parsedHistory = [];
+          const chunksRef = collection(db, 'artifacts', appId, 'backups', backup.date, 'historyChunks');
+          const chunksSnap = await getDocs(chunksRef);
+          chunksSnap.forEach(docSnap => {
+            if (docSnap.data().items) {
+               parsedHistory = parsedHistory.concat(docSnap.data().items);
+            }
+          });
+          parsedHistory.sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        } catch (e) {
+          console.error("Failed to load chunked history", e);
+        }
+      }
 
       setLocalPacketCatalog(parsedCatalog);
       setLocalLooseInventory(parsedLoose);
