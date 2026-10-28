@@ -1,0 +1,312 @@
+'use server'
+
+import { createClient } from '@/utils/supabase/server';
+import { supabaseAdmin } from '@/utils/supabase/admin';
+import { revalidatePath } from 'next/cache';
+
+// Enforce factory role permissions
+async function enforceFactoryAccess() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const role = user?.user_metadata?.role;
+
+  if (!user || !['admin', 'manager', 'employee'].includes(role)) {
+    throw new Error('Unauthorized: Insufficient permissions for factory operations.');
+  }
+
+  return { user, role };
+}
+
+// 1. Fetch All Loose Lots
+export async function fetchLooseLots() {
+  await enforceFactoryAccess();
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from('factory_loose_lots')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching loose lots:', error);
+    return [];
+  }
+
+  return (data || []).map(row => ({
+    id: row.id,
+    lotNumber: row.lot_number,
+    grade: row.grade,
+    mark: row.mark,
+    bags: Number(row.bags),
+    weightPerBag: Number(row.weight_per_bag),
+    weight: Number(row.weight),
+    date: row.date,
+    labels: row.labels || []
+  }));
+}
+
+// 2. Add / Edit Loose Lot
+export async function saveLooseLot(lot: {
+  id: string;
+  lotNumber: string;
+  grade: string;
+  mark: string;
+  bags: number;
+  weightPerBag: number;
+  weight: number;
+  date: string;
+  labels: string[];
+}) {
+  const { user } = await enforceFactoryAccess();
+  const supabase = await createClient();
+
+  const isNew = !lot.id || lot.id.startsWith('new-');
+  const lotId = isNew ? `lot-${Date.now()}` : lot.id;
+
+  const payload = {
+    id: lotId,
+    lot_number: lot.lotNumber.trim(),
+    grade: lot.grade.trim(),
+    mark: lot.mark.trim(),
+    bags: lot.bags || 0,
+    weight_per_bag: lot.weightPerBag || 0,
+    weight: lot.weight || 0,
+    date: lot.date || new Date().toISOString().split('T')[0],
+    labels: lot.labels || [],
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabase
+    .from('factory_loose_lots')
+    .upsert(payload);
+
+  if (error) {
+    console.error('Error saving loose lot:', error);
+    return { error: error.message };
+  }
+
+  // Record audit history
+  await supabaseAdmin.from('factory_history').insert({
+    id: `hst-${Date.now()}`,
+    type: isNew ? 'LOT_ADDED' : 'LOT_EDITED',
+    description: `${isNew ? 'Added' : 'Updated'} lot ${lot.lotNumber} (${lot.mark}) - ${lot.weight} kg`,
+    user_id: user.id,
+    user_name: user.user_metadata?.name || user.email,
+    details: payload
+  });
+
+  revalidatePath('/factory');
+  return { success: true, lotId };
+}
+
+// 3. Delete Loose Lot
+export async function deleteLooseLot(lotId: string) {
+  const { user, role } = await enforceFactoryAccess();
+  if (!['admin', 'manager'].includes(role)) {
+    return { error: 'Only admins and managers can delete tea lots.' };
+  }
+
+  const supabase = await createClient();
+
+  // Protect system ledger lots
+  if (['l-balance', 'l-orthodox', 'l-cardamom', 'l-cardamom-husk'].includes(lotId)) {
+    return { error: 'System ledger lots cannot be deleted.' };
+  }
+
+  const { error } = await supabase
+    .from('factory_loose_lots')
+    .delete()
+    .eq('id', lotId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  await supabaseAdmin.from('factory_history').insert({
+    id: `hst-${Date.now()}`,
+    type: 'LOT_DELETED',
+    description: `Deleted loose lot: ${lotId}`,
+    user_id: user.id,
+    user_name: user.user_metadata?.name || user.email
+  });
+
+  revalidatePath('/factory');
+  return { success: true };
+}
+
+// 4. Fetch Active Blends (Under Process)
+export async function fetchUnderProcessBlends() {
+  await enforceFactoryAccess();
+  const supabase = await createClient();
+
+  const { data: blends, error } = await supabase
+    .from('factory_blends')
+    .select(`
+      id,
+      blend_name,
+      batch_no,
+      date,
+      total_quantity,
+      status,
+      created_at,
+      factory_blend_lots_used (
+        lot_id,
+        lot_number,
+        mark,
+        grade,
+        bags_used,
+        weight_used
+      )
+    `)
+    .eq('status', 'PENDING')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching blends:', error);
+    return [];
+  }
+
+  return (blends || []).map(b => ({
+    id: b.id,
+    blendName: b.blend_name,
+    batchNo: b.batch_no,
+    date: b.date,
+    totalQuantity: Number(b.total_quantity),
+    status: b.status,
+    lotsUsed: (b.factory_blend_lots_used || []).map((l: any) => ({
+      lotId: l.lot_id,
+      lotNumber: l.lot_number,
+      mark: l.mark,
+      grade: l.grade,
+      bagsUsed: Number(l.bags_used),
+      weightUsed: Number(l.weight_used)
+    }))
+  }));
+}
+
+// 5. Create Blend (Atomic Stored Procedure)
+export async function createFactoryBlend(data: {
+  blendId?: string;
+  blendName: string;
+  batchNo: string;
+  date: string;
+  totalQuantity: number;
+  lots: {
+    lotId: string;
+    lotNumber: string;
+    mark: string;
+    grade?: string;
+    bagsUsed: number;
+    weightUsed: number;
+  }[];
+}) {
+  const { user } = await enforceFactoryAccess();
+
+  const blendId = data.blendId || `BLD-${Date.now()}`;
+  const historyId = `hst-${Date.now()}`;
+  const userName = user.user_metadata?.name || user.email;
+
+  // Execute ACID stored procedure via supabaseAdmin RPC
+  const { data: result, error } = await supabaseAdmin.rpc('fn_create_factory_blend', {
+    p_blend_id: blendId,
+    p_blend_name: data.blendName,
+    p_batch_no: data.batchNo,
+    p_date: data.date,
+    p_total_quantity: data.totalQuantity,
+    p_created_by: user.id,
+    p_lots: data.lots,
+    p_history_id: historyId,
+    p_user_name: userName
+  });
+
+  if (error) {
+    console.error('Error creating factory blend:', error);
+    return { error: error.message };
+  }
+
+  revalidatePath('/factory');
+  return { success: true, blendId };
+}
+
+// 6. Finalize Blend (Atomic Packaging & Completion)
+export async function finalizeFactoryBlend(data: {
+  blendId: string;
+  returnedLoose: number;
+  returnLotId: string; // e.g. 'l-balance'
+  outputs: {
+    productId: string;
+    productName: string;
+    quantity: number;
+    unit: string;
+    totalWeight: number;
+  }[];
+}) {
+  const { user } = await enforceFactoryAccess();
+
+  const historyId = `hst-${Date.now()}`;
+  const userName = user.user_metadata?.name || user.email;
+
+  const { data: result, error } = await supabaseAdmin.rpc('fn_finalize_factory_blend', {
+    p_blend_id: data.blendId,
+    p_returned_loose: data.returnedLoose || 0,
+    p_return_lot_id: data.returnLotId || 'l-balance',
+    p_outputs: data.outputs,
+    p_history_id: historyId,
+    p_user_id: user.id,
+    p_user_name: userName
+  });
+
+  if (error) {
+    console.error('Error finalizing blend:', error);
+    return { error: error.message };
+  }
+
+  revalidatePath('/factory');
+  return { success: true };
+}
+
+// 7. Delete / Revert Blend (Atomic Revert)
+export async function deleteFactoryBlend(blendId: string) {
+  const { user, role } = await enforceFactoryAccess();
+  if (!['admin', 'manager'].includes(role)) {
+    return { error: 'Permission Denied: Only admins and managers can delete under-process blends.' };
+  }
+
+  const historyId = `hst-${Date.now()}`;
+  const userName = user.user_metadata?.name || user.email;
+
+  const { data: result, error } = await supabaseAdmin.rpc('fn_delete_factory_blend', {
+    p_blend_id: blendId,
+    p_history_id: historyId,
+    p_user_id: user.id,
+    p_user_name: userName
+  });
+
+  if (error) {
+    console.error('Error deleting blend:', error);
+    return { error: error.message };
+  }
+
+  revalidatePath('/factory');
+  return { success: true };
+}
+
+// 8. Fetch History Ledger & Sequence Gap Analysis
+export async function fetchFactoryHistory() {
+  await enforceFactoryAccess();
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from('factory_history')
+    .select('*')
+    .order('timestamp', { ascending: false })
+    .limit(200);
+
+  if (error) {
+    console.error('Error fetching factory history:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
