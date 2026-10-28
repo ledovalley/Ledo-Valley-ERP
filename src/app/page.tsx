@@ -167,123 +167,85 @@ export default function App() {
   };
 
   // --- Cloud Synchronized Setters ---
-  const setPacketCatalog = async (newValOrUpdater: CatalogProduct[] | ((prev: CatalogProduct[]) => CatalogProduct[])) => {
-    let newVal: CatalogProduct[];
-    if (typeof newValOrUpdater === 'function') {
-      newVal = newValOrUpdater(localPacketCatalog);
-    } else {
-      newVal = newValOrUpdater;
-    }
-    setLocalPacketCatalog(newVal);
-
-    if (auth && user) {
-      pendingCloudWrites++;
-      const docRef = doc(db, 'artifacts', appId, 'globalData', 'catalog');
-      try {
-        await setDoc(docRef, { items: newVal });
-      } catch (error) { 
-        console.error("Sync failed for setPacketCatalog: ", error);
-      } finally {
-        pendingCloudWrites--;
+  const setPacketCatalog = (newValOrUpdater: CatalogProduct[] | ((prev: CatalogProduct[]) => CatalogProduct[])) => {
+    setLocalPacketCatalog(prev => {
+      const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      if (auth && user) {
+        pendingCloudWrites++;
+        setDoc(doc(db, 'artifacts', appId, 'globalData', 'catalog'), { items: newVal })
+          .catch(error => console.error("Sync failed for setPacketCatalog: ", error))
+          .finally(() => { pendingCloudWrites--; });
       }
-    }
+      return newVal;
+    });
   };
 
-  const setLooseInventory = async (newValOrUpdater: LooseLot[] | ((prev: LooseLot[]) => LooseLot[])) => {
-    let newVal: LooseLot[];
-    if (typeof newValOrUpdater === 'function') {
-      newVal = newValOrUpdater(localLooseInventory);
-    } else {
-      newVal = newValOrUpdater;
-    }
-    setLocalLooseInventory(newVal);
-
-    if (auth && user) {
-      pendingCloudWrites++;
-      const docRef = doc(db, 'artifacts', appId, 'globalData', 'loose');
-      try {
-        await setDoc(docRef, { items: newVal });
-      } catch (error) { 
-        console.error("Sync failed for setLooseInventory: ", error);
-      } finally {
-        pendingCloudWrites--;
+  const setLooseInventory = (newValOrUpdater: LooseLot[] | ((prev: LooseLot[]) => LooseLot[])) => {
+    setLocalLooseInventory(prev => {
+      const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      if (auth && user) {
+        pendingCloudWrites++;
+        setDoc(doc(db, 'artifacts', appId, 'globalData', 'loose'), { items: newVal })
+          .catch(error => console.error("Sync failed for setLooseInventory: ", error))
+          .finally(() => { pendingCloudWrites--; });
       }
-    }
+      return newVal;
+    });
   };
 
-  const setUnderProcess = async (newValOrUpdater: BlendProcess[] | ((prev: BlendProcess[]) => BlendProcess[])) => {
-    let newVal: BlendProcess[];
-    if (typeof newValOrUpdater === 'function') {
-      newVal = newValOrUpdater(localUnderProcess);
-    } else {
-      newVal = newValOrUpdater;
-    }
-    setLocalUnderProcess(newVal);
+  const setUnderProcess = (newValOrUpdater: BlendProcess[] | ((prev: BlendProcess[]) => BlendProcess[])) => {
+    setLocalUnderProcess(prev => {
+      const newVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      if (auth && user) {
+        pendingCloudWrites++;
+        const deleted = prev.filter(p => !newVal.find(n => n.id === p.id));
+        const addedOrModified = newVal.filter(n => prev.find(old => old.id === n.id) !== n);
 
-    if (auth && user) {
-      pendingCloudWrites++;
-      const docRef = doc(db, 'artifacts', appId, 'globalData', 'process');
-      try {
-        await setDoc(docRef, { items: newVal });
-      } catch (error) { 
-        console.error("Sync failed for setUnderProcess: ", error);
-      } finally {
-        pendingCloudWrites--;
+        const batch = writeBatch(db);
+        deleted.forEach(d => batch.delete(doc(db, 'artifacts', appId, 'underProcess', d.id)));
+        addedOrModified.forEach(n => batch.set(doc(db, 'artifacts', appId, 'underProcess', n.id), n));
+        
+        batch.commit().catch(e => console.error("Sync failed for setUnderProcess:", e)).finally(() => { pendingCloudWrites--; });
       }
-    }
+      return newVal;
+    });
   };
 
-  const setHistoryList = async (newValOrUpdater: HistoryRecord[] | ((prev: HistoryRecord[]) => HistoryRecord[])) => {
+  const setHistoryList = (newValOrUpdater: HistoryRecord[] | ((prev: HistoryRecord[]) => HistoryRecord[])) => {
     const enrich = (val: HistoryRecord[]) => val.map(record => (!record.userId && systemUser) ? { ...record, userId: systemUser.userId, userName: systemUser.name } : record);
     
-    let computedVal: HistoryRecord[];
-    if (typeof newValOrUpdater === 'function') {
-      computedVal = newValOrUpdater(localHistoryList);
-    } else {
-      computedVal = newValOrUpdater;
-    }
-    
-    const newVal = enrich(computedVal);
-    setLocalHistoryList(newVal);
-    
-    if (auth && user) {
-      pendingCloudWrites++;
-      try {
+    setLocalHistoryList(prev => {
+      const computedVal = typeof newValOrUpdater === 'function' ? newValOrUpdater(prev) : newValOrUpdater;
+      const newVal = enrich(computedVal);
+      
+      if (auth && user) {
+        pendingCloudWrites++;
         const batch = writeBatch(db);
-        const oldIds = new Set(localHistoryList.map(h => h.id));
+        const oldIds = new Set(prev.map(h => h.id));
         const newIds = new Set(newVal.map(h => h.id));
         
         let batchCount = 0;
-        
         newVal.forEach(record => {
           if (!oldIds.has(record.id)) {
-            const docRef = doc(db, 'artifacts', appId, 'historyList', record.id);
-            batch.set(docRef, record);
+            batch.set(doc(db, 'artifacts', appId, 'historyList', record.id), record);
             batchCount++;
           }
         });
-        
-        localHistoryList.forEach(record => {
+        prev.forEach(record => {
           if (!newIds.has(record.id)) {
-            const docRef = doc(db, 'artifacts', appId, 'historyList', record.id);
-            batch.delete(docRef);
+            batch.delete(doc(db, 'artifacts', appId, 'historyList', record.id));
             batchCount++;
           }
         });
 
         if (batchCount > 0) {
-          if (batchCount <= 500) {
-            await batch.commit();
-          } else {
-            console.error("Too many writes for a single batch!");
-          }
+          batch.commit().catch(error => console.error("Sync failed for setHistoryList: ", error)).finally(() => { pendingCloudWrites--; });
+        } else {
+          pendingCloudWrites--;
         }
-      } catch (error) { 
-        console.error("Sync failed for setHistoryList: ", error);
-      } finally {
-        pendingCloudWrites--;
       }
-    }
+      return newVal;
+    });
   };
 
   // 1. Firebase Authentication Hook
@@ -333,6 +295,18 @@ export default function App() {
       setLocalHistoryList(hList);
     });
 
+    // Listen to underProcess subcollection separately
+    const processRef = collection(db, 'artifacts', appId, 'underProcess');
+    const unsubscribeProcess = onSnapshot(processRef, (snapshot) => {
+      const pList: BlendProcess[] = [];
+      snapshot.forEach(d => {
+        pList.push(d.data() as BlendProcess);
+      });
+      // Sort processes by newest first (descending ID usually maps to creation order if IDs contain timestamp, else by status or just ID)
+      pList.sort((a, b) => b.id.localeCompare(a.id));
+      setLocalUnderProcess(pList);
+    });
+
     const collRef = collection(db, 'artifacts', appId, 'globalData');
     const unsubscribe = onSnapshot(collRef, (snapshot) => {
       let loadedCatalog: CatalogProduct[] | null = null;
@@ -351,7 +325,29 @@ export default function App() {
 
         if (d.id === 'catalog') loadedCatalog = extract(data);
         if (d.id === 'loose') loadedLoose = extract(data);
-        if (d.id === 'process') loadedProcess = extract(data);
+        
+        // Auto-migrate legacy process
+        if (d.id === 'process') {
+           const legacyProcess = extract(data);
+           if (legacyProcess && legacyProcess.length > 0) {
+             const migrate = async () => {
+               try {
+                 const batch = writeBatch(db);
+                 legacyProcess.forEach(p => {
+                   batch.set(doc(db, 'artifacts', appId, 'underProcess', p.id), p);
+                 });
+                 await batch.commit();
+                 await deleteDoc(doc(db, 'artifacts', appId, 'globalData', 'process'));
+                 console.log("Process Migration complete!");
+               } catch(e) {
+                 console.error("Failed to migrate process", e);
+               }
+             };
+             migrate();
+           } else if (legacyProcess && legacyProcess.length === 0) {
+             deleteDoc(doc(db, 'artifacts', appId, 'globalData', 'process')).catch(()=>{});
+           }
+        }
         
         // History is now loaded separately from the historyList subcollection
         if (d.id === 'history') {
@@ -393,19 +389,14 @@ export default function App() {
         setDoc(doc(db, 'artifacts', appId, 'globalData', 'loose'), { items: initialLoose });
         loadedLoose = initialLoose;
       }
-      if (!loadedProcess) {
-        setDoc(doc(db, 'artifacts', appId, 'globalData', 'process'), { items: [] });
-        loadedProcess = [];
-      }
 
       if (loadedCatalog !== null) setLocalPacketCatalog(loadedCatalog);
       if (loadedLoose !== null) setLocalLooseInventory(loadedLoose);
-      if (loadedProcess !== null) setLocalUnderProcess(loadedProcess);
       setIsDataLoaded(true);
     }, (error) => {
       console.error("Firestore error:", error);
     });
-    return () => { unsubscribe(); unsubscribeHist(); };
+    return () => { unsubscribe(); unsubscribeHist(); unsubscribeProcess(); };
   }, [auth, user, systemUser]);
 
   // 2.5 Audit Logs Listener (Admin Only)
