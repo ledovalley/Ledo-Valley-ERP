@@ -48,7 +48,10 @@ export async function login(formData: FormData) {
     httpOnly: false,
   })
 
-  // Check user role: admin, manager, employee get the portal selection hub
+  // Check user role:
+  // - Admin goes to /portal (can choose ERP or Factory)
+  // - Warehouse Manager goes directly to /factory
+  // - Sales Person goes directly to /dashboard
   const { data: { user } } = await supabase.auth.getUser()
   const role = user?.user_metadata?.role
 
@@ -56,9 +59,11 @@ export async function login(formData: FormData) {
   revalidatePath('/portal')
   revalidatePath('/factory')
 
-  if (['admin', 'manager', 'employee'].includes(role)) {
+  if (role === 'admin') {
     redirect('/portal')
+  } else if (role === 'manager') {
+    redirect('/factory')
+  } else {
+    redirect('/dashboard')
   }
-
-  redirect('/dashboard')
 }

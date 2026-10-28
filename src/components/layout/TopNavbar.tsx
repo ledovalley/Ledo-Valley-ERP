@@ -51,7 +51,7 @@ export default function TopNavbar({
 
   const isFactory = pathname.startsWith('/factory');
   const isPortal = pathname.startsWith('/portal');
-  const canAccessPortal = ['admin', 'manager', 'employee'].includes(userRole.toLowerCase());
+  const canAccessPortal = userRole.toLowerCase() === 'admin';
 
   const navItems = isPortal
     ? []
@@ -69,11 +69,8 @@ export default function TopNavbar({
         { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
         { label: 'Sales & Retailers', href: '/dashboard/sales', icon: TrendingUp },
         { label: 'Audit & Ledger', href: '/dashboard/ledger', icon: Award },
-        ...(userRole === 'admin' || userRole === 'manager'
-          ? [{ label: 'User Management', href: '/dashboard/users', icon: Users }]
-          : []),
         ...(userRole === 'admin'
-          ? [{ label: 'System Logs', href: '/dashboard/logs', icon: Activity }]
+          ? [{ label: 'User Management', href: '/dashboard/users', icon: Users }]
           : []),
       ];
 
@@ -92,7 +89,7 @@ export default function TopNavbar({
 
   const isSettingsActive = pathname.startsWith('/dashboard/settings');
 
-  const canAccessSettings = userRole === 'admin' || userRole === 'manager';
+  const canAccessSettings = userRole === 'admin';
 
   return (
     <header className="w-full mb-6 relative z-30">

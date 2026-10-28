@@ -74,66 +74,98 @@ export async function updateSession(request: NextRequest) {
     }
   }
 
-  // Protect Portal & Factory routes
-  if (pathname.startsWith('/portal') || pathname.startsWith('/factory')) {
+  // Protect Portal: ONLY Admin can access the Portal selection hub
+  if (pathname.startsWith('/portal')) {
     if (!user || isSessionExpired) {
-      const url = request.nextUrl.clone()
-      url.pathname = '/login'
+      const url = request.nextUrl.clone();
+      url.pathname = '/login';
       if (isSessionExpired) {
-        url.searchParams.set('reason', 'expired')
+        url.searchParams.set('reason', 'expired');
       }
-      return NextResponse.redirect(url)
+      return NextResponse.redirect(url);
     }
 
     const role = user.user_metadata?.role;
-    if (!['admin', 'manager', 'employee'].includes(role)) {
-      const url = request.nextUrl.clone()
-      url.pathname = '/unauthorized'
-      return NextResponse.redirect(url)
+    if (role !== 'admin') {
+      const url = request.nextUrl.clone();
+      url.pathname = role === 'manager' ? '/factory' : '/dashboard';
+      return NextResponse.redirect(url);
     }
   }
 
-  // Protect Dashboard routes
+  // Protect Factory routes: Only Admin and Warehouse Manager can access
+  if (pathname.startsWith('/factory')) {
+    if (!user || isSessionExpired) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/login';
+      if (isSessionExpired) {
+        url.searchParams.set('reason', 'expired');
+      }
+      return NextResponse.redirect(url);
+    }
+
+    const role = user.user_metadata?.role;
+    if (!['admin', 'manager'].includes(role)) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/unauthorized';
+      return NextResponse.redirect(url);
+    }
+  }
+
+  // Protect Dashboard routes: Admin and Sales can access (Managers belong strictly to Factory)
   if (pathname.startsWith('/dashboard')) {
     if (!user || isSessionExpired) {
-      const url = request.nextUrl.clone()
-      url.pathname = '/login'
+      const url = request.nextUrl.clone();
+      url.pathname = '/login';
       if (isSessionExpired) {
-        url.searchParams.set('reason', 'expired')
+        url.searchParams.set('reason', 'expired');
       }
-      return NextResponse.redirect(url)
+      return NextResponse.redirect(url);
     }
 
     const role = user.user_metadata?.role;
 
-    // If a non-admin/manager tries to access Settings, block them
-    if (pathname.startsWith('/dashboard/settings') && !['admin', 'manager'].includes(role)) {
-      const url = request.nextUrl.clone()
-      url.pathname = '/unauthorized'
-      return NextResponse.redirect(url)
-    }
-    
-    // If a non-admin/manager tries to access User Management, block them
-    if (pathname.startsWith('/dashboard/users') && !['admin', 'manager'].includes(role)) {
-      const url = request.nextUrl.clone()
-      url.pathname = '/unauthorized'
-      return NextResponse.redirect(url)
+    // Managers cannot access ERP Dashboard
+    if (role === 'manager') {
+      const url = request.nextUrl.clone();
+      url.pathname = '/factory';
+      return NextResponse.redirect(url);
     }
 
-    // System logs are strictly restricted to admin
-    if (pathname.startsWith('/dashboard/logs') && role !== 'admin') {
-      const url = request.nextUrl.clone()
-      url.pathname = '/unauthorized'
-      return NextResponse.redirect(url)
+    // If a non-admin tries to access Settings, block them
+    if (pathname.startsWith('/dashboard/settings') && role !== 'admin') {
+      const url = request.nextUrl.clone();
+      url.pathname = '/unauthorized';
+      return NextResponse.redirect(url);
+    }
+    
+    // If a non-admin tries to access User Management, block them
+    if (pathname.startsWith('/dashboard/users') && role !== 'admin') {
+      const url = request.nextUrl.clone();
+      url.pathname = '/unauthorized';
+      return NextResponse.redirect(url);
+    }
+
+    // System logs are disabled for now
+    if (pathname.startsWith('/dashboard/logs')) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/unauthorized';
+      return NextResponse.redirect(url);
     }
   }
 
   // Redirect logged-in users away from the login page only if session is active
   if (user && !isSessionExpired && pathname.startsWith('/login')) {
     const role = user.user_metadata?.role;
-    const url = request.nextUrl.clone()
-    url.pathname = ['admin', 'manager', 'employee'].includes(role) ? '/portal' : '/dashboard'
-    return NextResponse.redirect(url)
+    const url = request.nextUrl.clone();
+    if (role === 'admin') {
+      url.pathname = '/portal';
+    } else if (role === 'manager') {
+      url.pathname = '/factory';
+    } else {
+      url.pathname = '/dashboard';
+    }
+    return NextResponse.redirect(url);
   }
 
   return supabaseResponse

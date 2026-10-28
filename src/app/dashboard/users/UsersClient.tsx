@@ -36,10 +36,10 @@ import { ASSAM_DISTRICTS } from '@/utils/districts';
 type SupabaseUser = any;
 
 const ALLOWANCE_OPTIONS = [
-  { id: 'bike_allowance', label: 'Bike Allowance', icon: Bike, hint: 'Fuel & Maintenance' },
-  { id: 'food_da', label: 'Food Allowance / DA', icon: Utensils, hint: 'Daily field meal DA' },
-  { id: 'daily_wages_component', label: 'Daily Wages Component', icon: Coins, hint: 'Daily wage add-on' },
-  { id: 'mobile_recharge', label: 'Mobile Recharge', icon: PhoneCall, hint: 'Cellular calling plan' }
+  { id: 'bike_allowance', label: 'Bike Allowance', icon: Bike, hint: 'Fuel & Maintenance (₹ / km driven)' },
+  { id: 'food_da', label: 'Food Allowance / DA', icon: Utensils, hint: 'Daily field meal DA (₹ / day)' },
+  { id: 'daily_wages_component', label: 'Daily Wages Component', icon: Coins, hint: 'Daily wage add-on (₹ / day)' },
+  { id: 'mobile_recharge', label: 'Mobile Recharge', icon: PhoneCall, hint: 'Cellular calling plan (₹ / month)' }
 ];
 
 const EMPLOYMENT_TYPES = [
@@ -261,8 +261,8 @@ export default function UsersClient({
             {[
               { id: 'all', label: 'All Users', count: stats.total },
               { id: 'admin', label: 'Admins', count: stats.admins },
-              { id: 'manager', label: 'Managers', count: stats.managers },
-              { id: 'sales', label: 'Sales Staff', count: stats.sales },
+              { id: 'manager', label: 'Warehouse Managers', count: stats.managers },
+              { id: 'sales', label: 'Sales Persons', count: stats.sales },
             ].map(f => (
               <button
                 key={f.id}
@@ -443,7 +443,9 @@ export default function UsersClient({
                                       <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
                                       <span>{aOpt.label}</span>
                                       {Boolean(a.rate) && (
-                                        <span className="font-mono text-[#0D4728] font-bold ml-0.5">(₹{a.rate})</span>
+                                        <span className="font-mono text-[#0D4728] font-bold ml-0.5">
+                                          (₹{a.rate}{a.id === 'bike_allowance' ? '/km' : ''})
+                                        </span>
                                       )}
                                     </span>
                                   );
@@ -614,10 +616,9 @@ export default function UsersClient({
                     onChange={(e) => setRole(e.target.value)}
                     className="w-full bg-slate-50/70 border border-slate-200 rounded-full py-2.5 px-4 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0D4728]/20 focus:border-[#0D4728] transition-all"
                   >
-                    <option value="sales">Sales Person (Field Retailers & Records)</option>
-                    <option value="manager">Manager (Territory & Staff Oversight)</option>
-                    <option value="admin">Administrator (Full Access & Deletion)</option>
-                    <option value="employee">Standard Staff</option>
+                    <option value="admin">Admin (Full Access & Portal)</option>
+                    <option value="manager">Warehouse Manager (Factory & Blending Module Only)</option>
+                    <option value="sales">Sales Person (Field Sales & ERP Dashboard)</option>
                   </select>
                 </div>
 
@@ -780,12 +781,15 @@ export default function UsersClient({
                                     <input
                                       type="number"
                                       min="0"
-                                      step="1"
-                                      placeholder="Enter rate (e.g. 250)"
+                                      step={entry.id === 'bike_allowance' ? '0.5' : '1'}
+                                      placeholder={entry.id === 'bike_allowance' ? 'Rate per km (e.g. 3)' : 'Enter rate (e.g. 250)'}
                                       value={entry.rate}
                                       onChange={(e) => updateAllowanceRate(entry.id, e.target.value)}
-                                      className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 pl-6 pr-2 text-xs font-mono font-semibold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0D4728] focus:border-[#0D4728]"
+                                      className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 pl-6 pr-14 text-xs font-mono font-semibold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0D4728] focus:border-[#0D4728]"
                                     />
+                                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-slate-400">
+                                      {entry.id === 'bike_allowance' ? '/ km' : entry.id === 'mobile_recharge' ? '/ mo' : '/ day'}
+                                    </span>
                                   </div>
                                 </div>
                               );

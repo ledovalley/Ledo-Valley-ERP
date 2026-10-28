@@ -16,7 +16,7 @@ async function enforceRolePermissions(allowedRoles: string[]) {
 }
 
 export async function fetchUsers() {
-  await enforceRolePermissions(['admin', 'manager'])
+  await enforceRolePermissions(['admin'])
   
   // Note: listUsers is limited to 50 users by default. For a real app, implement pagination.
   const { data, error } = await supabaseAdmin.auth.admin.listUsers()
@@ -26,7 +26,7 @@ export async function fetchUsers() {
 }
 
 export async function createUser(formData: FormData) {
-  await enforceRolePermissions(['admin', 'manager'])
+  await enforceRolePermissions(['admin'])
 
   const email = formData.get('email') as string
   const password = formData.get('password') as string
@@ -68,7 +68,7 @@ export async function createUser(formData: FormData) {
 }
 
 export async function updateUser(id: string, formData: FormData) {
-  await enforceRolePermissions(['admin', 'manager'])
+  await enforceRolePermissions(['admin'])
 
   const email = formData.get('email') as string
   const role = formData.get('role') as string

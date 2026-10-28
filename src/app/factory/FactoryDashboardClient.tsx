@@ -1,11 +1,11 @@
 "use client";
 
 import React, { useState, useEffect, useTransition } from "react";
-import { 
-  Warehouse, 
-  Coffee, 
-  Settings2, 
-  History, 
+import {
+  Warehouse,
+  Coffee,
+  Settings2,
+  History,
   AlertTriangle,
   Loader2,
   RefreshCw,
@@ -258,11 +258,10 @@ export default function FactoryDashboardClient({
       {/* Toast Notification */}
       {toast && (
         <div
-          className={`fixed top-6 right-6 z-50 px-5 py-3 rounded-2xl shadow-xl border text-sm font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-4 ${
-            toast.type === "error"
+          className={`fixed top-6 right-6 z-50 px-5 py-3 rounded-2xl shadow-xl border text-sm font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-4 ${toast.type === "error"
               ? "bg-red-50 text-red-700 border-red-200"
               : "bg-[#0D4728] text-[#FFF9CD] border-[#0D4728]"
-          }`}
+            }`}
         >
           <span>{toast.message}</span>
         </div>
@@ -310,11 +309,11 @@ export default function FactoryDashboardClient({
             onDeleteLoose={handleDeleteLooseItem}
             onPurgeNilLoose={handlePurgeNilLooseStock}
             onEditLooseItem={handleEditLooseItem}
-            onEditCatalogProduct={() => {}}
-            onDeleteCatalog={() => {}}
+            onEditCatalogProduct={() => { }}
+            onDeleteCatalog={() => { }}
             isCatalogUnlocked={userRole === "admin" || userRole === "manager"}
             onUnlockRequest={() => triggerToast("Role-based permissions are active.")}
-            onLockRequest={() => {}}
+            onLockRequest={() => { }}
             onAddCatalogProduct={handleAddCatalogProduct}
             triggerToast={triggerToast}
             systemUser={systemUser}

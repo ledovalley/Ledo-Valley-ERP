@@ -853,9 +853,10 @@ export default function LedgerClient({
                   (selectedUserProfile.user_metadata?.allowances || []).map((a: any, idx: number) => {
                     const aId = typeof a === 'object' && a !== null ? a.id : a;
                     const aRate = typeof a === 'object' && a !== null && a.rate ? a.rate : null;
+                    const isBike = aId === 'bike_allowance';
                     return (
                       <span key={idx} className="px-2.5 py-0.5 rounded-full bg-white/15 text-white text-[11px] font-medium border border-white/20">
-                        {String(aId).replace(/_/g, ' ')}{aRate ? ` (₹${aRate})` : ''}
+                        {String(aId).replace(/_/g, ' ')}{aRate ? ` (₹${aRate}${isBike ? '/km' : ''})` : ''}
                       </span>
                     );
                   })
@@ -879,7 +880,24 @@ export default function LedgerClient({
           <p className="text-2xl sm:text-3xl font-light text-slate-900 font-mono tracking-tight">
             {metrics.totalKmDriven.toFixed(1)} <span className="text-sm font-normal text-slate-500">km</span>
           </p>
-          <p className="text-xs text-slate-500 font-medium">{filteredShifts.length} logged shifts</p>
+          <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
+            <span>{filteredShifts.length} logged shifts</span>
+            {(() => {
+              const bikeAllowance = (selectedUserProfile?.user_metadata?.allowances || []).find(
+                (a: any) => (typeof a === 'object' && a !== null ? a.id : a) === 'bike_allowance'
+              );
+              const bikeRate = bikeAllowance && typeof bikeAllowance === 'object' ? Number(bikeAllowance.rate) || 0 : 0;
+              if (bikeRate > 0 && metrics.totalKmDriven > 0) {
+                const totalBikeClaim = Math.round(metrics.totalKmDriven * bikeRate);
+                return (
+                  <span className="text-[#0D4728] font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/60 font-mono text-[11px]">
+                    ₹{totalBikeClaim.toLocaleString('en-IN')} claim (@₹{bikeRate}/km)
+                  </span>
+                );
+              }
+              return null;
+            })()}
+          </div>
         </div>
 
         {/* Gross Revenue & Orders */}

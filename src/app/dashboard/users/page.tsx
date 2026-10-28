@@ -11,8 +11,8 @@ export default async function UsersPage() {
   const { data: { user } } = await supabase.auth.getUser();
   const currentUserRole = user?.user_metadata?.role || "employee";
 
-  // Prevent lower roles from viewing
-  if (!['admin', 'manager'].includes(currentUserRole)) {
+  // Prevent non-admins from viewing User Management
+  if (currentUserRole !== 'admin') {
     return (
       <div className="p-8 text-center text-red-500 font-medium">
         Unauthorized to view User Management.
