@@ -89,7 +89,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
       const details = h.details;
       if (!details) return;
 
-      const inputStr = details.lotsUsed ? details.lotsUsed.map((l: any) => `${l.lotNumber} [${l.mark}] (${l.weightUsed.toFixed(2)}kg)`).join('; ') : '';
+      const inputStr = details.lotsUsed ? details.lotsUsed.map((l: any) => `${l.mark || ''} [Lot: ${l.lotNumber}] (${l.weightUsed.toFixed(2)}kg)`).join('; ') : '';
       const outputStr = details.producedItems ? details.producedItems.map((p: any) => `${p.productName} x${p.quantity} (${p.totalWeight.toFixed(2)}kg)`).join('; ') : '';
       const variance = details.totalQuantity !== undefined ? details.totalQuantity - (details.totalOutputQuantity || 0) : 0;
 
@@ -118,7 +118,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
       const details = h.details;
       if (!details) return [h.id, h.desc, '', '', '', '', ''];
 
-      const inputStr = details.lotsUsed ? details.lotsUsed.map((l: any) => `${l.lotNumber} (${l.weightUsed.toFixed(1)}kg)`).join(', ') : '';
+      const inputStr = details.lotsUsed ? details.lotsUsed.map((l: any) => `${l.mark || ''} (Lot: ${l.lotNumber}) - ${l.weightUsed.toFixed(1)}kg`).join(', ') : '';
       const outputStr = details.producedItems ? details.producedItems.map((p: any) => `${p.productName} x${p.quantity}`).join(', ') : '';
       const variance = details.totalQuantity !== undefined ? details.totalQuantity - (details.totalOutputQuantity || 0) : 0;
 
