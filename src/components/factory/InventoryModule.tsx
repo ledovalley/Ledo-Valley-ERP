@@ -800,11 +800,11 @@ export default function InventoryModule({
                             </div>
                           )}
                         </td>
-                        <td className="p-4 font-medium">{item.mark}</td>
-                        <td className="p-4">{item.grade}</td>
-                        <td className="p-4 text-right font-medium">{item.id.startsWith('l-') ? '-' : `${item.bags} bags`}</td>
-                        <td className="p-4 text-right text-[#0B172B]/55 font-mono">{item.id.startsWith('l-') ? '-' : (item.weightPerBag ? `${parseFloat(item.weightPerBag.toString()).toFixed(2)} kg` : '-')}</td>
-                        <td className="p-4 text-right font-bold text-[#0B172B] bg-[#F0F5F9] font-mono">{item.weight.toFixed(2)} kg</td>
+                        <td className="p-4 font-semibold text-slate-800">{item.mark}</td>
+                        <td className="p-4 font-medium text-slate-700">{item.grade}</td>
+                        <td className="p-4 text-right font-medium text-slate-800">{item.id.startsWith('l-') ? '-' : `${item.bags} bags`}</td>
+                        <td className="p-4 text-right text-slate-600 font-mono">{item.id.startsWith('l-') ? '-' : (item.weightPerBag ? `${parseFloat(item.weightPerBag.toString()).toFixed(2)} kg` : '-')}</td>
+                        <td className="p-4 text-right font-bold text-slate-900 bg-slate-50 font-mono">{item.weight.toFixed(2)} kg</td>
                         <td className="p-4">
                           <div className="flex flex-wrap gap-1">
                             {(item.labels || []).map((lbl, idx) => (
@@ -823,7 +823,10 @@ export default function InventoryModule({
                             ) : systemUser.role !== 'user' ? (
                               <>
                                 <button 
-                                  onClick={() => startEditing(item)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    startEditing(item);
+                                  }}
                                   className={`p-1.5 rounded-lg transition-all duration-200 ${isCatalogUnlocked ? 'bg-white text-[#0B172B]/70 border border-[#0B172B]/10 hover:bg-[#F0F5F9] hover:text-[#009965]' : 'bg-[#F0F5F9]/50 text-[#0B172B]/40 border border-[#0B172B]/10 cursor-not-allowed'}`}
                                   title={isCatalogUnlocked ? "Edit Lot Details" : "Elevated access required"}
                                 >
@@ -831,7 +834,10 @@ export default function InventoryModule({
                                 </button>
                                 {item.bags === 0 || item.weight <= 0 ? (
                                   <button 
-                                    onClick={() => onDeleteLoose(item.id)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onDeleteLoose(item.id);
+                                    }}
                                     className="bg-white text-rose-500 border border-slate-200 hover:bg-rose-50 p-1.5 rounded transition-all duration-200"
                                     title="Purge lot with zero stock"
                                   >
@@ -902,7 +908,10 @@ export default function InventoryModule({
                           ) : isCatalogUnlocked ? (
                             <div className="flex items-center justify-center gap-2">
                               <button 
-                                onClick={() => startEditingPacket(item)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  startEditingPacket(item);
+                                }}
                                 className="p-1.5 rounded transition-all duration-200 bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
                                 title="Edit Product Details"
                               >
@@ -910,7 +919,10 @@ export default function InventoryModule({
                               </button>
                               {systemUser.role === 'super_admin' && (
                                 <button 
-                                  onClick={() => onDeleteCatalog(item.id)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDeleteCatalog(item.id);
+                                  }}
                                   className="bg-white text-rose-500 border border-slate-200 hover:bg-rose-50 p-1.5 rounded transition-all inline-flex items-center gap-1 text-xs font-bold"
                                   title="Remove product template from inventory master completely"
                                 >
@@ -963,28 +975,28 @@ export default function InventoryModule({
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-bold text-[#0B172B]/70 uppercase">Lot Number</label>
-                  <input type="text" className="w-full mt-1 px-4 py-3 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965]/30 outline-none text-sm bg-[#F0F5F9]/50" value={editLotData.lotNumber || ''} onChange={e => setEditLotData({...editLotData, lotNumber: e.target.value})} placeholder="Lot No" />
+                  <label className="text-xs font-bold text-slate-700 uppercase">Lot Number</label>
+                  <input type="text" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editLotData.lotNumber || ''} onChange={e => setEditLotData({...editLotData, lotNumber: e.target.value})} placeholder="Lot No" />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-[#0B172B]/70 uppercase">Mark</label>
-                  <input type="text" className="w-full mt-1 px-4 py-3 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965]/30 outline-none text-sm bg-[#F0F5F9]/50" value={editLotData.mark || ''} onChange={e => setEditLotData({...editLotData, mark: e.target.value})} placeholder="Mark" />
+                  <label className="text-xs font-bold text-slate-700 uppercase">Mark</label>
+                  <input type="text" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editLotData.mark || ''} onChange={e => setEditLotData({...editLotData, mark: e.target.value})} placeholder="Mark" />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-[#0B172B]/70 uppercase">Grade</label>
-                  <input type="text" className="w-full mt-1 px-4 py-3 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965]/30 outline-none text-sm bg-[#F0F5F9]/50" value={editLotData.grade || ''} onChange={e => setEditLotData({...editLotData, grade: e.target.value})} placeholder="Grade" />
+                  <label className="text-xs font-bold text-slate-700 uppercase">Grade</label>
+                  <input type="text" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editLotData.grade || ''} onChange={e => setEditLotData({...editLotData, grade: e.target.value})} placeholder="Grade" />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-[#0B172B]/70 uppercase">Bags</label>
-                  <input type="number" min="0" className="w-full mt-1 px-4 py-3 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965]/30 outline-none text-sm bg-[#F0F5F9]/50" value={editLotData.bags || ''} onChange={e => setEditLotData({...editLotData, bags: parseInt(e.target.value) || 0})} placeholder="Bags" />
+                  <label className="text-xs font-bold text-slate-700 uppercase">Bags</label>
+                  <input type="number" min="0" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editLotData.bags ?? ''} onChange={e => setEditLotData({...editLotData, bags: parseInt(e.target.value) || 0})} placeholder="Bags" />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-[#0B172B]/70 uppercase">Weight Per Bag (kg)</label>
-                  <input type="number" step="0.01" min="0" className="w-full mt-1 px-4 py-3 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965]/30 outline-none text-sm bg-[#F0F5F9]/50" value={editLotData.weightPerBag || ''} onChange={e => setEditLotData({...editLotData, weightPerBag: parseFloat(e.target.value) || 0})} placeholder="Wt/Bag" />
+                  <label className="text-xs font-bold text-slate-700 uppercase">Weight Per Bag (kg)</label>
+                  <input type="number" step="0.01" min="0" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editLotData.weightPerBag ?? ''} onChange={e => setEditLotData({...editLotData, weightPerBag: parseFloat(e.target.value) || 0})} placeholder="Wt/Bag" />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-[#0B172B]/70 uppercase">Labels (Comma Separated)</label>
-                  <input type="text" className="w-full mt-1 px-4 py-3 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965]/30 outline-none text-sm bg-[#F0F5F9]/50" value={editLotData.labels ? editLotData.labels.join(', ') : ''} onChange={e => setEditLotData({...editLotData, labels: e.target.value.split(',').map(s=>s.trim())})} placeholder="e.g. Organic, Export" />
+                  <label className="text-xs font-bold text-slate-700 uppercase">Labels (Comma Separated)</label>
+                  <input type="text" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editLotData.labels ? editLotData.labels.join(', ') : ''} onChange={e => setEditLotData({...editLotData, labels: e.target.value.split(',').map(s=>s.trim())})} placeholder="e.g. Organic, Export" />
                 </div>
               </div>
               <div className="pt-2">
@@ -1008,34 +1020,34 @@ export default function InventoryModule({
             </div>
             <div className="p-6 space-y-4">
               <div>
-                <label className="text-xs font-bold text-[#0B172B]/70 uppercase">Product Name</label>
-                <input type="text" className="w-full mt-1 px-4 py-3 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965]/30 outline-none text-sm bg-[#F0F5F9]/50" value={editPacketData.name || ''} onChange={e => setEditPacketData({...editPacketData, name: e.target.value})} placeholder="Product Name" />
+                <label className="text-xs font-bold text-slate-700 uppercase">Product Name</label>
+                <input type="text" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editPacketData.name || ''} onChange={e => setEditPacketData({...editPacketData, name: e.target.value})} placeholder="Product Name" />
               </div>
               <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <label className="text-xs font-bold text-[#0B172B]/70 uppercase">Tracking Unit</label>
-                  <select className="w-full mt-1 px-4 py-3 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965]/30 outline-none text-sm bg-[#F0F5F9]/50" value={editPacketData.unit || 'KG'} onChange={e => setEditPacketData({...editPacketData, unit: e.target.value})}>
+                  <label className="text-xs font-bold text-slate-700 uppercase">Tracking Unit</label>
+                  <select className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white font-medium" value={editPacketData.unit || 'KG'} onChange={e => setEditPacketData({...editPacketData, unit: e.target.value})}>
                     <option value="KG">KG</option>
                     <option value="Bundle">Bundle</option>
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-[#0B172B]/70 uppercase">Multiplier (kg/unit)</label>
-                  <input type="number" step="0.001" min="0" className="w-full mt-1 px-4 py-3 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965]/30 outline-none text-sm bg-[#F0F5F9]/50" value={editPacketData.size || ''} onChange={e => setEditPacketData({...editPacketData, size: parseFloat(e.target.value) || 0})} placeholder="Multiplier" />
+                  <label className="text-xs font-bold text-slate-700 uppercase">Multiplier (kg/unit)</label>
+                  <input type="number" step="0.001" min="0" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editPacketData.size ?? ''} onChange={e => setEditPacketData({...editPacketData, size: parseFloat(e.target.value) || 0})} placeholder="Multiplier" />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-[#0B172B]/70 uppercase">Stock Units</label>
-                  <input type="number" step="0.001" className="w-full mt-1 px-4 py-3 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965]/30 outline-none text-sm bg-[#F0F5F9]/50" value={editPacketData.stock || ''} onChange={e => setEditPacketData({...editPacketData, stock: parseFloat(e.target.value) || 0})} placeholder="Stock" />
+                  <label className="text-xs font-bold text-slate-700 uppercase">Stock Units</label>
+                  <input type="number" step="0.001" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editPacketData.stock ?? ''} onChange={e => setEditPacketData({...editPacketData, stock: parseFloat(e.target.value) || 0})} placeholder="Stock" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-bold text-[#0B172B]/70 uppercase">HSN Code</label>
-                  <input type="text" className="w-full mt-1 px-4 py-3 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965]/30 outline-none text-sm bg-[#F0F5F9]/50" value={editPacketData.hsnCode || ''} onChange={e => setEditPacketData({...editPacketData, hsnCode: e.target.value})} placeholder="HSN Code" />
+                  <label className="text-xs font-bold text-slate-700 uppercase">HSN Code</label>
+                  <input type="text" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editPacketData.hsnCode || ''} onChange={e => setEditPacketData({...editPacketData, hsnCode: e.target.value})} placeholder="HSN Code" />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-[#0B172B]/70 uppercase">GST Rate</label>
-                  <select className="w-full mt-1 px-4 py-3 border border-[#0B172B]/10 rounded-xl focus:ring-2 focus:ring-[#009965]/30 outline-none text-sm bg-[#F0F5F9]/50" value={editPacketData.gstRate !== undefined ? editPacketData.gstRate : 5} onChange={e => setEditPacketData({...editPacketData, gstRate: parseFloat(e.target.value)})}>
+                  <label className="text-xs font-bold text-slate-700 uppercase">GST Rate</label>
+                  <select className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white font-medium" value={editPacketData.gstRate !== undefined ? editPacketData.gstRate : 5} onChange={e => setEditPacketData({...editPacketData, gstRate: parseFloat(e.target.value)})}>
                     {[0, 5, 8, 9, 10, 12, 15, 18].map(rate => (
                       <option key={rate} value={rate}>{rate}%</option>
                     ))}
