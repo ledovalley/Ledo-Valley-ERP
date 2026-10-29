@@ -45,10 +45,16 @@ export default function InventoryModule({
   historyList,
   logSystemAction
 }: InventoryModuleProps) {
-  const [activeTab, setActiveTab] = useState<'loose'|'packet'>('loose');
+  const [activeTab, setActiveTab] = useState<'loose' | 'packet'>('loose');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLotForAudit, setSelectedLotForAudit] = useState<{ type: 'loose' | 'catalog', item: LooseLot | CatalogProduct } | null>(null);
   const [looseSortBy, setLooseSortBy] = useState('default');
+
+  // Multi-attribute filters for Loose Tea Stock
+  const [selectedMarkFilter, setSelectedMarkFilter] = useState('all');
+  const [selectedGradeFilter, setSelectedGradeFilter] = useState('all');
+  const [selectedLabelFilter, setSelectedLabelFilter] = useState('all');
+  const [selectedBagsFilter, setSelectedBagsFilter] = useState('all'); // 'all' | 'zero' | '1-20' | '21-50' | '50+'
   
   const [showAddNewProduct, setShowAddNewProduct] = useState(false);
   const [newProductForm, setNewProductForm] = useState({
@@ -240,16 +246,91 @@ export default function InventoryModule({
     setShowAddNewProduct(false);
   };
 
+  // Unique filter options extracted dynamically from inventory
+  const filterOptions = useMemo(() => {
+    const marks = new Set<string>();
+    const grades = new Set<string>();
+    const labels = new Set<string>();
+
+    looseInventory.forEach(item => {
+      if (item.mark && !item.id.startsWith('l-')) marks.add(item.mark.trim());
+      if (item.grade && !item.id.startsWith('l-')) grades.add(item.grade.trim());
+      if (item.labels && Array.isArray(item.labels)) {
+        item.labels.forEach(l => {
+          if (l.trim()) labels.add(l.trim());
+        });
+      }
+    });
+
+    return {
+      marks: Array.from(marks).sort(),
+      grades: Array.from(grades).sort(),
+      labels: Array.from(labels).sort()
+    };
+  }, [looseInventory]);
+
+  const hasActiveFilters = selectedMarkFilter !== 'all' ||
+    selectedGradeFilter !== 'all' ||
+    selectedLabelFilter !== 'all' ||
+    selectedBagsFilter !== 'all' ||
+    searchTerm.trim() !== '';
+
+  const clearAllFilters = () => {
+    setSelectedMarkFilter('all');
+    setSelectedGradeFilter('all');
+    setSelectedLabelFilter('all');
+    setSelectedBagsFilter('all');
+    setSearchTerm('');
+  };
+
   const filteredLoose = useMemo(() => {
     let result = looseInventory.filter(item => {
-      if (!searchTerm) return true;
-      const searchLower = searchTerm.toLowerCase();
-      return (
-        item.lotNumber.toLowerCase().includes(searchLower) ||
-        item.grade.toLowerCase().includes(searchLower) ||
-        item.mark.toLowerCase().includes(searchLower) ||
-        (item.labels && item.labels.some(l => l.toLowerCase().includes(searchLower)))
-      );
+      // 1. Text Search Filter
+      if (searchTerm) {
+        const searchLower = searchTerm.toLowerCase();
+        const matchesSearch = (
+          item.lotNumber.toLowerCase().includes(searchLower) ||
+          item.grade.toLowerCase().includes(searchLower) ||
+          item.mark.toLowerCase().includes(searchLower) ||
+          (item.labels && item.labels.some(l => l.toLowerCase().includes(searchLower)))
+        );
+        if (!matchesSearch) return false;
+      }
+
+      // Allow system ledger lots to remain visible unless explicitly filtered out
+      const isSystem = item.id.startsWith('l-');
+
+      // 2. Mark Filter
+      if (selectedMarkFilter !== 'all') {
+        if (isSystem) return false;
+        if (item.mark.toLowerCase().trim() !== selectedMarkFilter.toLowerCase().trim()) return false;
+      }
+
+      // 3. Grade Filter
+      if (selectedGradeFilter !== 'all') {
+        if (isSystem) return false;
+        if (item.grade.toLowerCase().trim() !== selectedGradeFilter.toLowerCase().trim()) return false;
+      }
+
+      // 4. Label Filter
+      if (selectedLabelFilter !== 'all') {
+        if (isSystem) return false;
+        if (!item.labels || !item.labels.some(l => l.toLowerCase().trim() === selectedLabelFilter.toLowerCase().trim())) {
+          return false;
+        }
+      }
+
+      // 5. Bags Filter
+      if (selectedBagsFilter !== 'all') {
+        if (isSystem) return false;
+        const bags = Number(item.bags) || 0;
+        if (selectedBagsFilter === 'zero' && bags > 0) return false;
+        if (selectedBagsFilter === '1-20' && (bags < 1 || bags > 20)) return false;
+        if (selectedBagsFilter === '21-50' && (bags < 21 || bags > 50)) return false;
+        if (selectedBagsFilter === '50+' && bags <= 50) return false;
+      }
+
+      return true;
     });
 
     if (looseSortBy === 'stock_asc') {
@@ -271,7 +352,15 @@ export default function InventoryModule({
     });
 
     return result;
-  }, [looseInventory, searchTerm, looseSortBy]);
+  }, [
+    looseInventory,
+    searchTerm,
+    looseSortBy,
+    selectedMarkFilter,
+    selectedGradeFilter,
+    selectedLabelFilter,
+    selectedBagsFilter
+  ]);
 
   const filteredPackets = useMemo(() => {
     return packetCatalog.filter(item => {
@@ -521,8 +610,6 @@ export default function InventoryModule({
             </>
           )}
 
-
-
           {activeTab === 'packet' && (
             <>
               <button 
@@ -554,6 +641,92 @@ export default function InventoryModule({
             </>
           )}
         </div>
+
+        {/* Multi-attribute Filter Bar for Loose Tea Stock */}
+        {activeTab === 'loose' && (
+          <div className="pt-1 pb-3 mb-2 flex flex-wrap items-center gap-2.5 border-t border-[#0B172B]/5">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider shrink-0 flex items-center gap-1">
+              <Filter size={12} className="text-[#0D4728]" /> Filters:
+            </span>
+
+            {/* Mark Name Filter */}
+            <div className="flex items-center gap-1">
+              <select
+                value={selectedMarkFilter}
+                onChange={(e) => setSelectedMarkFilter(e.target.value)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#F0F5F9]/70 hover:bg-[#F0F5F9] border border-slate-200 text-slate-800 outline-none focus:ring-1 focus:ring-[#009965] transition-all cursor-pointer"
+                title="Filter by Mark Name"
+              >
+                <option value="all">All Marks ({filterOptions.marks.length})</option>
+                {filterOptions.marks.map(mark => (
+                  <option key={mark} value={mark}>{mark}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Grade Filter */}
+            <div className="flex items-center gap-1">
+              <select
+                value={selectedGradeFilter}
+                onChange={(e) => setSelectedGradeFilter(e.target.value)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#F0F5F9]/70 hover:bg-[#F0F5F9] border border-slate-200 text-slate-800 outline-none focus:ring-1 focus:ring-[#009965] transition-all cursor-pointer"
+                title="Filter by Grade"
+              >
+                <option value="all">All Grades ({filterOptions.grades.length})</option>
+                {filterOptions.grades.map(grade => (
+                  <option key={grade} value={grade}>{grade}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Labels Filter */}
+            <div className="flex items-center gap-1">
+              <select
+                value={selectedLabelFilter}
+                onChange={(e) => setSelectedLabelFilter(e.target.value)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#F0F5F9]/70 hover:bg-[#F0F5F9] border border-slate-200 text-slate-800 outline-none focus:ring-1 focus:ring-[#009965] transition-all cursor-pointer"
+                title="Filter by Labels"
+              >
+                <option value="all">All Labels ({filterOptions.labels.length})</option>
+                {filterOptions.labels.map(label => (
+                  <option key={label} value={label}>{label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Bags Count Filter */}
+            <div className="flex items-center gap-1">
+              <select
+                value={selectedBagsFilter}
+                onChange={(e) => setSelectedBagsFilter(e.target.value)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#F0F5F9]/70 hover:bg-[#F0F5F9] border border-slate-200 text-slate-800 outline-none focus:ring-1 focus:ring-[#009965] transition-all cursor-pointer"
+                title="Filter by Number of Bags"
+              >
+                <option value="all">All Bag Counts</option>
+                <option value="zero">0 Bags (NIL Stock)</option>
+                <option value="1-20">1 - 20 Bags</option>
+                <option value="21-50">21 - 50 Bags</option>
+                <option value="50+">50+ Bags</option>
+              </select>
+            </div>
+
+            {/* Active Match Count & Clear Pill */}
+            <div className="ml-auto flex items-center gap-2">
+              <span className="text-xs font-mono font-semibold text-slate-500 bg-slate-100 px-2 py-1 rounded-md">
+                {filteredLoose.length} / {looseInventory.length} lots
+              </span>
+              {hasActiveFilters && (
+                <button
+                  onClick={clearAllFilters}
+                  className="px-2.5 py-1 rounded-md bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold transition-colors border border-rose-200 flex items-center gap-1"
+                  title="Reset all search and filter conditions"
+                >
+                  <X size={12} /> Reset
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         
         {showAddNewProduct && isCatalogUnlocked && activeTab === 'packet' && (
           <div className="fixed inset-0 bg-[#0B172B]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">

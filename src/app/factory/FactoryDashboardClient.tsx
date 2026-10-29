@@ -254,7 +254,7 @@ export default function FactoryDashboardClient({
   ];
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col h-full min-h-0">
       {/* Toast Notification */}
       {toast && (
         <div
@@ -281,24 +281,26 @@ export default function FactoryDashboardClient({
         />
       )}
 
-      {/* Single Top Navbar Controlling Factory Navigation */}
-      <TopNavbar
-        userRole={userRole}
-        userEmail={userEmail}
-        initial={userEmail.charAt(0).toUpperCase()}
-        lastSignInAt={lastSignInAt}
-        signOutAction={signOutAction}
-        factoryTab={activeTab}
-        onFactoryTabChange={(tab) => setActiveTab(tab)}
-        factoryBadges={{
-          inventory: looseInventory.length,
-          process: underProcess.length,
-          missing: missingBlends.length
-        }}
-      />
+      {/* Sticky Top Navbar Controlling Factory Navigation */}
+      <div className="shrink-0">
+        <TopNavbar
+          userRole={userRole}
+          userEmail={userEmail}
+          initial={userEmail.charAt(0).toUpperCase()}
+          lastSignInAt={lastSignInAt}
+          signOutAction={signOutAction}
+          factoryTab={activeTab}
+          onFactoryTabChange={(tab) => setActiveTab(tab)}
+          factoryBadges={{
+            inventory: looseInventory.length,
+            process: underProcess.length,
+            missing: missingBlends.length
+          }}
+        />
+      </div>
 
-      {/* Tab Panels */}
-      <div className="w-full">
+      {/* Scrollable Tab Panels Container */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {activeTab === "inventory" && (
           <InventoryModule
             looseInventory={looseInventory}
