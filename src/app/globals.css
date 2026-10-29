@@ -80,7 +80,6 @@ body {
   }
 
   /* Hide everything marked as print:hidden or non-print elements */
-  .print\\:hidden,
   header,
   nav {
     display: none !important;
