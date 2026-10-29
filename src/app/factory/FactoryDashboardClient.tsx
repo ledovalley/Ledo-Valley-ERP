@@ -282,7 +282,7 @@ export default function FactoryDashboardClient({
       )}
 
       {/* Sticky Top Navbar Controlling Factory Navigation */}
-      <div className="shrink-0">
+      <div className="shrink-0 print:hidden">
         <TopNavbar
           userRole={userRole}
           userEmail={userEmail}
@@ -300,7 +300,7 @@ export default function FactoryDashboardClient({
       </div>
 
       {/* Scrollable Tab Panels Container */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto print:hidden">
         {activeTab === "inventory" && (
           <InventoryModule
             looseInventory={looseInventory}
@@ -375,80 +375,82 @@ export default function FactoryDashboardClient({
 
       {/* Hidden Print Blend Sheet Template */}
       {printBlend && (
-        <div className="hidden print:block p-8 bg-white text-black min-h-screen font-sans">
-          <div className="flex justify-between items-end border-b-2 border-slate-900 pb-4 mb-8">
+        <div className="hidden print:block p-6 sm:p-10 bg-white text-slate-900 w-full min-h-screen font-sans">
+          <div className="flex justify-between items-end border-b-2 border-slate-900 pb-4 mb-6">
             <div>
               <h1 className="text-3xl font-black text-slate-900 uppercase tracking-widest">Ledo Valley ERP</h1>
-              <h2 className="text-xl font-bold text-slate-600 mt-1">Blend Execution Sheet</h2>
+              <h2 className="text-lg font-bold text-slate-600 mt-0.5">Blend Execution Sheet</h2>
             </div>
             <div className="text-right">
-              <div className="text-sm font-bold">Date: {printBlend.date}</div>
-              <div className="text-sm font-bold">ID: {printBlend.id}</div>
+              <div className="text-xs font-semibold text-slate-500">Date: <span className="text-slate-900 font-bold">{printBlend.date}</span></div>
+              <div className="text-xs font-semibold text-slate-500">ID: <span className="text-slate-900 font-bold">{printBlend.id}</span></div>
             </div>
           </div>
 
-          <div className="bg-slate-50 p-4 border border-slate-300 rounded mb-8">
+          <div className="bg-slate-50 p-4 border border-slate-300 rounded-lg mb-6">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <span className="block text-xs uppercase font-bold text-slate-500">Target Blend Name</span>
-                <span className="text-lg font-bold">{printBlend.blendName}</span>
+                <span className="block text-[11px] uppercase font-bold text-slate-500 tracking-wider">Target Blend Name</span>
+                <span className="text-base font-bold text-slate-900 leading-snug block mt-0.5">{printBlend.blendName}</span>
               </div>
               <div>
-                <span className="block text-xs uppercase font-bold text-slate-500">Batch Code</span>
-                <span className="text-lg font-bold">{printBlend.batchNo || "N/A"}</span>
+                <span className="block text-[11px] uppercase font-bold text-slate-500 tracking-wider">Batch Code</span>
+                <span className="text-base font-bold text-slate-900 mt-0.5 block">{printBlend.batchNo || "N/A"}</span>
               </div>
             </div>
           </div>
 
-          <table className="w-full text-left border-collapse border border-slate-400 mb-12">
+          <table className="w-full text-left border-collapse border border-slate-300 mb-8 text-xs">
             <thead>
               <tr className="bg-slate-100">
-                <th className="border border-slate-400 p-3 font-bold uppercase text-xs">Lot / Mark Details</th>
-                <th className="border border-slate-400 p-3 font-bold uppercase text-xs">Grade & Labels</th>
-                <th className="border border-slate-400 p-3 font-bold uppercase text-xs text-right">Bags to Pick</th>
-                <th className="border border-slate-400 p-3 font-bold uppercase text-xs text-right">Target Weight</th>
-                <th className="border border-slate-400 p-3 font-bold uppercase text-xs text-center w-32">Picker Sign</th>
+                <th className="border border-slate-300 p-2.5 font-bold uppercase text-[10px] text-slate-700 tracking-wider">Lot / Mark Details</th>
+                <th className="border border-slate-300 p-2.5 font-bold uppercase text-[10px] text-slate-700 tracking-wider">Grade & Labels</th>
+                <th className="border border-slate-300 p-2.5 font-bold uppercase text-[10px] text-slate-700 tracking-wider text-right">Bags to Pick</th>
+                <th className="border border-slate-300 p-2.5 font-bold uppercase text-[10px] text-slate-700 tracking-wider text-right">Target Weight</th>
+                <th className="border border-slate-300 p-2.5 font-bold uppercase text-[10px] text-slate-700 tracking-wider text-center w-28">Picker Sign</th>
               </tr>
             </thead>
             <tbody>
               {printBlend.lotsUsed.map((l, i) => (
-                <tr key={i}>
-                  <td className="border border-slate-400 p-3 font-semibold text-sm">
+                <tr key={i} className="border-b border-slate-200">
+                  <td className="border border-slate-300 p-2.5 font-bold text-slate-900">
                     {l.lotNumber}
-                    <div className="text-xs text-slate-600 mt-0.5">{l.mark}</div>
+                    <div className="text-[11px] font-semibold text-slate-600 mt-0.5">{l.mark}</div>
                   </td>
-                  <td className="border border-slate-400 p-3 text-sm">
-                    <span className="font-bold text-slate-800">{l.grade || "-"}</span>
+                  <td className="border border-slate-300 p-2.5 text-slate-800">
+                    <span className="font-bold text-slate-900">{l.grade || "-"}</span>
                     {l.labels && l.labels.length > 0 && (
-                      <div className="text-xs text-slate-500 mt-0.5">{l.labels.join(", ")}</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">{l.labels.join(", ")}</div>
                     )}
                   </td>
-                  <td className="border border-slate-400 p-3 text-right font-bold text-lg">
+                  <td className="border border-slate-300 p-2.5 text-right font-black text-slate-900 text-sm font-mono">
                     {l.bagsUsed === "-" ? "Bulk kg" : l.bagsUsed}
                   </td>
-                  <td className="border border-slate-400 p-3 text-right font-medium">
+                  <td className="border border-slate-300 p-2.5 text-right font-bold text-slate-900 font-mono">
                     {l.weightUsed.toFixed(2)} kg
                   </td>
-                  <td className="border border-slate-400 p-3"></td>
+                  <td className="border border-slate-300 p-2.5"></td>
                 </tr>
               ))}
-              <tr className="bg-slate-100">
-                <td colSpan={2} className="border border-slate-400 p-3 font-black text-right uppercase text-sm">Total Required:</td>
-                <td className="border border-slate-400 p-3 text-right font-bold text-lg">
+              <tr className="bg-slate-100 font-bold border-t-2 border-slate-400">
+                <td colSpan={2} className="border border-slate-300 p-2.5 font-black text-right uppercase text-xs text-slate-900">Total Required:</td>
+                <td className="border border-slate-300 p-2.5 text-right font-black text-sm text-slate-900 font-mono">
                   {printBlend.lotsUsed.reduce((sum, l) => sum + (l.bagsUsed === "-" ? 0 : Number(l.bagsUsed)), 0)} bags
                 </td>
-                <td className="border border-slate-400 p-3 text-right font-black text-lg">{printBlend.totalQuantity.toFixed(2)} kg</td>
-                <td className="border border-slate-400 p-3"></td>
+                <td className="border border-slate-300 p-2.5 text-right font-black text-sm text-slate-900 font-mono">
+                  {printBlend.totalQuantity.toFixed(2)} kg
+                </td>
+                <td className="border border-slate-300 p-2.5"></td>
               </tr>
             </tbody>
           </table>
 
-          <div className="flex justify-between mt-32 px-12">
-            <div className="text-center w-64 border-t-2 border-slate-400 pt-3">
-              <span className="font-bold uppercase text-sm">Authorized By</span>
+          <div className="flex justify-between mt-20 px-8">
+            <div className="text-center w-52 border-t border-slate-400 pt-2">
+              <span className="font-bold uppercase text-[11px] text-slate-600 tracking-wider">Authorized By</span>
             </div>
-            <div className="text-center w-64 border-t-2 border-slate-400 pt-3">
-              <span className="font-bold uppercase text-sm">Blender Signature</span>
+            <div className="text-center w-52 border-t border-slate-400 pt-2">
+              <span className="font-bold uppercase text-[11px] text-slate-600 tracking-wider">Blender Signature</span>
             </div>
           </div>
         </div>

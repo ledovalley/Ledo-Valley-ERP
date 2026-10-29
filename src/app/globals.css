@@ -56,3 +56,45 @@ body {
   animation: shimmerWave 1.6s infinite ease-in-out;
   pointer-events: none;
 }
+
+@media print {
+  @page {
+    size: auto;
+    margin: 10mm;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  /* Unclip containers when printing */
+  html,
+  body,
+  #__next,
+  main,
+  div {
+    overflow: visible !important;
+  }
+
+  /* Hide everything marked as print:hidden or non-print elements */
+  .print\\:hidden,
+  header,
+  nav {
+    display: none !important;
+  }
+
+  /* Ensure the printed sheet is crisp and breaks cleanly */
+  table {
+    page-break-inside: auto;
+  }
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+  thead {
+    display: table-header-group;
+  }
+}
