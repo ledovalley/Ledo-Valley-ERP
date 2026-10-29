@@ -58,7 +58,6 @@ export async function saveLooseLot(lot: {
   labels: string[];
 }) {
   const { user } = await enforceFactoryAccess();
-  const supabase = await createClient();
 
   const isNew = !lot.id || lot.id.startsWith('new-');
   const lotId = isNew ? `lot-${Date.now()}` : lot.id;
@@ -76,7 +75,7 @@ export async function saveLooseLot(lot: {
     updated_at: new Date().toISOString()
   };
 
-  const { error } = await supabase
+  const { error } = await supabaseAdmin
     .from('factory_loose_lots')
     .upsert(payload);
 
@@ -106,14 +105,12 @@ export async function deleteLooseLot(lotId: string) {
     return { error: 'Only admins and managers can delete tea lots.' };
   }
 
-  const supabase = await createClient();
-
   // Protect system ledger lots
   if (['l-balance', 'l-orthodox', 'l-cardamom', 'l-cardamom-husk'].includes(lotId)) {
     return { error: 'System ledger lots cannot be deleted.' };
   }
 
-  const { error } = await supabase
+  const { error } = await supabaseAdmin
     .from('factory_loose_lots')
     .delete()
     .eq('id', lotId);
