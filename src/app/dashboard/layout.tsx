@@ -1,5 +1,5 @@
 import { signOut } from "./actions";
-import { createClient } from "@/utils/supabase/server";
+import { getCachedUser } from "@/utils/supabase/server";
 import { connection } from "next/server";
 import TopNavbar from "@/components/layout/TopNavbar";
 import SessionMonitor from "@/components/auth/SessionMonitor";
@@ -8,8 +8,7 @@ export const instant = false;
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   await connection();
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getCachedUser();
 
   const role = user?.user_metadata?.role || "Unknown Role";
   const email = user?.email || "No Email";

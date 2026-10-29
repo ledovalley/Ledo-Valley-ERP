@@ -1,4 +1,4 @@
-import { createClient } from "@/utils/supabase/server";
+import { getCachedUser } from "@/utils/supabase/server";
 import { redirect } from "next/navigation";
 import {
   fetchLooseLots,
@@ -15,8 +15,7 @@ export const instant = false;
 
 export default async function FactoryPage() {
   await connection();
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getCachedUser();
 
   if (!user) {
     redirect("/login");

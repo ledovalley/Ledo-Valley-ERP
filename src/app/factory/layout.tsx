@@ -1,4 +1,4 @@
-import { createClient } from "@/utils/supabase/server";
+import { getCachedUser } from "@/utils/supabase/server";
 import { connection } from "next/server";
 import SessionMonitor from "@/components/auth/SessionMonitor";
 
@@ -6,8 +6,7 @@ export const instant = false;
 
 export default async function FactoryLayout({ children }: { children: React.ReactNode }) {
   await connection();
-  const supabase = await createClient();
-  await supabase.auth.getUser();
+  await getCachedUser();
 
   return (
     <div className="h-screen print:h-auto bg-[#DCE2E8] print:bg-white flex flex-col justify-start antialiased selection:bg-[#0D4728]/15 selection:text-[#0D4728] overflow-hidden print:overflow-visible">

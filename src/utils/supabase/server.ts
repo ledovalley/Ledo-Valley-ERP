@@ -1,5 +1,6 @@
-import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { cache } from 'react'
 
 export async function createClient() {
   const cookieStore = await cookies()
@@ -19,11 +20,21 @@ export async function createClient() {
             )
           } catch {
             // The `setAll` method was called from a Server Component.
-            // This can be ignored if you have middleware refreshing
-            // user sessions.
           }
         },
       },
     }
   )
 }
+
+/**
+ * Per-request cached user retriever.
+ * Prevents redundant Supabase Auth network round-trips when multiple layout, page,
+ * and server actions run within the same HTTP request cycle.
+ */
+export const getCachedUser = cache(async () => {
+  const supabase = await createClient()
+  const { data: { user }, error } = await supabase.auth.getUser()
+  if (error || !user) return null
+  return user
+})

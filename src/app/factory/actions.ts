@@ -6,8 +6,8 @@ import { revalidatePath } from 'next/cache';
 
 // Enforce factory role permissions
 async function enforceFactoryAccess() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { getCachedUser } = await import('@/utils/supabase/server');
+  const user = await getCachedUser();
   const role = user?.user_metadata?.role;
 
   if (!user || !['admin', 'manager', 'employee'].includes(role)) {
@@ -288,8 +288,8 @@ export async function deleteFactoryBlend(blendId: string) {
   return { success: true };
 }
 
-// 8. Fetch History Ledger & Sequence Gap Analysis
-export async function fetchFactoryHistory() {
+// 8. Fetch History Ledger & Sequence Gap Analysis (Paginated)
+export async function fetchFactoryHistory(limit: number = 50, offset: number = 0) {
   await enforceFactoryAccess();
   const supabase = await createClient();
 
@@ -297,7 +297,7 @@ export async function fetchFactoryHistory() {
     .from('factory_history')
     .select('*')
     .order('timestamp', { ascending: false })
-    .limit(200);
+    .range(offset, offset + limit - 1);
 
   if (error) {
     console.error('Error fetching factory history:', error);
