@@ -416,10 +416,10 @@ export default function BlendModule({
                     <div key={id} className="flex justify-between items-center bg-white border border-[#0B172B]/8 p-4 rounded-xl shadow-sm">
                       <div>
                         <div className="font-bold text-[#0B172B] text-sm flex items-center gap-2">
-                          {lot.lotNumber}
+                          {lot.mark}
                           {isSys && <span className="bg-[#009965]/10 text-[#009965] text-[10px] px-2 py-0.5 rounded font-bold">SYSTEM</span>}
                         </div>
-                        <div className="text-xs text-[#0B172B]/50 mt-0.5">{lot.mark} {lot.grade ? `• ${lot.grade}` : ''}</div>
+                        <div className="text-xs text-[#0B172B]/70 mt-0.5">Lot: <span className="font-semibold">{lot.lotNumber}</span> {lot.grade ? `• ${lot.grade}` : ''}</div>
                       </div>
                       <div className="text-right">
                         <div className="font-bold text-[#0B172B] font-mono text-sm">
@@ -516,8 +516,8 @@ export default function BlendModule({
             <thead className="bg-[#F0F5F9] sticky top-0 z-10">
               <tr>
                 <th className="p-3 w-12 text-center border-b border-[#0B172B]/8">Select</th>
-                <th className="p-3 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Lot No.</th>
                 <th className="p-3 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Brand (Mark)</th>
+                <th className="p-3 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Lot No.</th>
                 <th className="p-3 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Grade</th>
                 <th className="p-3 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Labels</th>
                 <th className="p-3 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider text-right border-b border-[#0B172B]/8">Available Stock</th>
@@ -540,10 +540,10 @@ export default function BlendModule({
                     )}
                   </td>
                   <td className="p-3">
-                    <div className="font-bold text-[#0B172B] text-sm">{lot.lotNumber}</div>
+                    <div className="font-bold text-slate-900 text-sm">{lot.mark}</div>
                   </td>
                   <td className="p-3">
-                    <div className="font-semibold text-[#0B172B]/80 text-sm">{lot.mark}</div>
+                    <div className="font-medium text-slate-700 text-sm">{lot.lotNumber}</div>
                   </td>
                   <td className="p-3">
                     <div className="text-sm text-[#0B172B]/70">{lot.grade}</div>

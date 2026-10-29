@@ -386,7 +386,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                             <div className="space-y-1">
                               {details.lotsUsed && details.lotsUsed.map((l: any, i: number) => (
                                 <div key={i} className="text-xs text-[#0B172B]/70 font-mono">
-                                  • {l.lotNumber} ({l.mark}):
+                                  • {l.mark} (Lot: {l.lotNumber}):
                                   {l.bagsUsed === '-' ? (
                                     <> <span className="font-semibold text-[#0B172B]">System Balance</span> ({(l.weightUsed ?? 0).toFixed(1)}kg)</>
                                   ) : (

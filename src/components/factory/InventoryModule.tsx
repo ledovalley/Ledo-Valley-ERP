@@ -377,10 +377,10 @@ export default function InventoryModule({
   const aggregatePacketWeight = filteredPackets.reduce((sum, item) => sum + (item.stock * item.size), 0);
 
   const exportLooseCSV = () => {
-    let csv = "Lot Number,Mark,Grade,Bags,Weight Per Bag (kg),Total Weight (kg),Date Received,Labels\n";
+    let csv = "Mark,Lot Number,Grade,Bags,Weight Per Bag (kg),Total Weight (kg),Date Received,Labels\n";
     filteredLoose.forEach(l => {
       const isSystem = l.id.startsWith('l-');
-      csv += `"${l.lotNumber}","${l.mark}","${l.grade}","${isSystem ? '-' : l.bags}","${isSystem ? '-' : l.weightPerBag}","${l.weight.toFixed(2)}","${l.date}","${(l.labels || []).join(', ')}"\n`;
+      csv += `"${l.mark}","${l.lotNumber}","${l.grade}","${isSystem ? '-' : l.bags}","${isSystem ? '-' : l.weightPerBag}","${l.weight.toFixed(2)}","${l.date}","${(l.labels || []).join(', ')}"\n`;
     });
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
@@ -417,8 +417,8 @@ export default function InventoryModule({
     const tableData = filteredLoose.map(l => {
       const isSystem = l.id.startsWith('l-');
       return [
-        l.lotNumber,
         l.mark,
+        l.lotNumber,
         l.grade,
         isSystem ? '-' : l.bags,
         isSystem ? '-' : l.weightPerBag,
@@ -430,7 +430,7 @@ export default function InventoryModule({
 
     autoTable(doc, {
       startY: 35,
-      head: [['Lot Number', 'Mark', 'Grade', 'Bags', 'Wt/Bag (kg)', 'Total Wt (kg)', 'Date Received', 'Labels']],
+      head: [['Mark', 'Lot Number', 'Grade', 'Bags', 'Wt/Bag (kg)', 'Total Wt (kg)', 'Date Received', 'Labels']],
       body: tableData,
       theme: 'grid',
       styles: { fontSize: 8, cellPadding: 2 },
@@ -789,12 +789,12 @@ export default function InventoryModule({
               <div className="overflow-y-auto p-6">
                 <form id="receiveLooseForm" onSubmit={handleLooseSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <div>
-                    <label className="block text-xs font-bold text-[#0B172B]/70 uppercase tracking-wider mb-1">Lot Number *</label>
-                    <input required type="text" value={looseForm.lotNumber} onChange={(e) => setLooseForm({...looseForm, lotNumber: e.target.value})} className="w-full px-4 py-3 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus:bg-white focus:ring-2 focus:ring-[#009965]/20 focus:border-[#009965] outline-none transition-all duration-200 text-sm font-medium text-[#0B172B] placeholder-[#0B172B]/30" />
-                  </div>
-                  <div>
                     <label className="block text-xs font-bold text-[#0B172B]/70 uppercase tracking-wider mb-1">Mark Name *</label>
                     <input required type="text" placeholder="e.g. Assam Gold" value={looseForm.mark} onChange={(e) => setLooseForm({...looseForm, mark: e.target.value})} className="w-full px-4 py-3 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus:bg-white focus:ring-2 focus:ring-[#009965]/20 focus:border-[#009965] outline-none transition-all duration-200 text-sm font-medium text-[#0B172B] placeholder-[#0B172B]/30" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#0B172B]/70 uppercase tracking-wider mb-1">Lot Number *</label>
+                    <input required type="text" placeholder="e.g. 554/26" value={looseForm.lotNumber} onChange={(e) => setLooseForm({...looseForm, lotNumber: e.target.value})} className="w-full px-4 py-3 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus:bg-white focus:ring-2 focus:ring-[#009965]/20 focus:border-[#009965] outline-none transition-all duration-200 text-sm font-medium text-[#0B172B] placeholder-[#0B172B]/30" />
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-[#0B172B]/70 uppercase tracking-wider mb-1">Grade *</label>
@@ -932,8 +932,8 @@ export default function InventoryModule({
             <>
               <thead className="bg-[#F0F5F9] sticky top-0 z-10">
                 <tr>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Lot/Batch No.</th>
                   <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Mark Name</th>
+                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Lot/Batch No.</th>
                   <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Grade</th>
                   <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-right">No. of Bags</th>
                   <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-right">Per Bag Wt</th>
@@ -951,8 +951,6 @@ export default function InventoryModule({
                     const isVeryOld = daysOld >= 270;
                     const isOld = daysOld >= 180 && !isVeryOld;
 
-
-
                     return (
                       <tr 
                         key={item.id} 
@@ -960,7 +958,10 @@ export default function InventoryModule({
                         onClick={() => setSelectedLotForAudit({ type: 'loose', item })}
                       >
                         <td className="p-4">
-                          <div className="font-bold text-[#0B172B] group-hover:text-[#009965] transition-colors">{item.lotNumber}</div>
+                          <div className="font-bold text-slate-900 group-hover:text-[#009965] transition-colors">{item.mark}</div>
+                        </td>
+                        <td className="p-4">
+                          <div className="font-semibold text-slate-800">{item.lotNumber}</div>
                           {item.id !== 'l-balance' && (
                             <div className="flex items-center gap-1.5 mt-1">
                               {isVeryOld ? (
@@ -973,7 +974,6 @@ export default function InventoryModule({
                             </div>
                           )}
                         </td>
-                        <td className="p-4 font-semibold text-slate-800">{item.mark}</td>
                         <td className="p-4 font-medium text-slate-700">{item.grade}</td>
                         <td className="p-4 text-right font-medium text-slate-800">{item.id.startsWith('l-') ? '-' : `${item.bags} bags`}</td>
                         <td className="p-4 text-right text-slate-600 font-mono">{item.id.startsWith('l-') ? '-' : (item.weightPerBag ? `${parseFloat(item.weightPerBag.toString()).toFixed(2)} kg` : '-')}</td>
@@ -1148,12 +1148,12 @@ export default function InventoryModule({
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-bold text-slate-700 uppercase">Lot Number</label>
-                  <input type="text" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editLotData.lotNumber || ''} onChange={e => setEditLotData({...editLotData, lotNumber: e.target.value})} placeholder="Lot No" />
+                  <label className="text-xs font-bold text-slate-700 uppercase">Mark *</label>
+                  <input type="text" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editLotData.mark || ''} onChange={e => setEditLotData({...editLotData, mark: e.target.value})} placeholder="Mark" />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-slate-700 uppercase">Mark</label>
-                  <input type="text" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editLotData.mark || ''} onChange={e => setEditLotData({...editLotData, mark: e.target.value})} placeholder="Mark" />
+                  <label className="text-xs font-bold text-slate-700 uppercase">Lot Number *</label>
+                  <input type="text" className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium" value={editLotData.lotNumber || ''} onChange={e => setEditLotData({...editLotData, lotNumber: e.target.value})} placeholder="Lot No" />
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-700 uppercase">Grade</label>
@@ -1314,13 +1314,13 @@ export default function InventoryModule({
               <div>
                 <h3 className="text-xl font-bold text-[#0B172B] mb-1">
                   {selectedLotForAudit.type === 'loose' 
-                    ? `Lot Details: ${(selectedLotForAudit.item as LooseLot).lotNumber}`
+                    ? `${(selectedLotForAudit.item as LooseLot).mark} - Lot: ${(selectedLotForAudit.item as LooseLot).lotNumber}`
                     : `Product Details: ${(selectedLotForAudit.item as CatalogProduct).name}`
                   }
                 </h3>
                 <p className="text-sm font-medium text-[#0B172B]/55">
                   {selectedLotForAudit.type === 'loose' 
-                    ? `Mark: ${(selectedLotForAudit.item as LooseLot).mark} • Grade: ${(selectedLotForAudit.item as LooseLot).grade}`
+                    ? `Mark: ${(selectedLotForAudit.item as LooseLot).mark} • Lot: ${(selectedLotForAudit.item as LooseLot).lotNumber} • Grade: ${(selectedLotForAudit.item as LooseLot).grade}`
                     : `Size: ${(selectedLotForAudit.item as CatalogProduct).size} kg • Unit: ${(selectedLotForAudit.item as CatalogProduct).unit}`
                   }
                 </p>

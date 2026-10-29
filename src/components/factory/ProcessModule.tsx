@@ -542,7 +542,7 @@ export default function ProcessModule({
                 <div className="max-h-24 overflow-y-auto pr-2 space-y-1.5">
                   {blend.lotsUsed.map((l: any, i: number) => (
                     <div key={i} className="flex justify-between text-[#0B172B]/70 font-mono">
-                      <span>• {l.lotNumber} ({l.mark})</span>
+                      <span>• {l.mark} (Lot: {l.lotNumber})</span>
                       <span className="font-bold text-[#0B172B]">
                         {l.bagsUsed === '-' ? `${l.weightUsed.toFixed(1)} kg` : `${l.bagsUsed} bags (${l.weightUsed.toFixed(1)} kg)`}
                       </span>

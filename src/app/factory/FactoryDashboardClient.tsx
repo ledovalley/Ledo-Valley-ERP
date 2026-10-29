@@ -403,7 +403,7 @@ export default function FactoryDashboardClient({
           <table className="w-full text-left border-collapse border border-slate-300 mb-8 text-xs">
             <thead>
               <tr className="bg-slate-100">
-                <th className="border border-slate-300 p-2.5 font-bold uppercase text-[10px] text-slate-700 tracking-wider">Lot / Mark Details</th>
+                <th className="border border-slate-300 p-2.5 font-bold uppercase text-[10px] text-slate-700 tracking-wider">Mark / Lot Details</th>
                 <th className="border border-slate-300 p-2.5 font-bold uppercase text-[10px] text-slate-700 tracking-wider">Grade & Labels</th>
                 <th className="border border-slate-300 p-2.5 font-bold uppercase text-[10px] text-slate-700 tracking-wider text-right">Bags to Pick</th>
                 <th className="border border-slate-300 p-2.5 font-bold uppercase text-[10px] text-slate-700 tracking-wider text-right">Target Weight</th>
@@ -414,8 +414,8 @@ export default function FactoryDashboardClient({
               {printBlend.lotsUsed.map((l, i) => (
                 <tr key={i} className="border-b border-slate-200">
                   <td className="border border-slate-300 p-2.5 font-bold text-slate-900">
-                    {l.lotNumber}
-                    <div className="text-[11px] font-semibold text-slate-600 mt-0.5">{l.mark}</div>
+                    {l.mark}
+                    <div className="text-[11px] font-semibold text-slate-600 mt-0.5">Lot: {l.lotNumber}</div>
                   </td>
                   <td className="border border-slate-300 p-2.5 text-slate-800">
                     <span className="font-bold text-slate-900">{l.grade || "-"}</span>
