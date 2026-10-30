@@ -120,7 +120,7 @@ export async function deleteLooseLot(lotId: string) {
   }
 
   await supabaseAdmin.from('factory_history').insert({
-    id: `hst-${Date.now()}`,
+    id: `hst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     type: 'LOT_DELETED',
     description: `Deleted loose lot: ${lotId}`,
     user_id: user.id,
@@ -129,6 +129,61 @@ export async function deleteLooseLot(lotId: string) {
 
   revalidatePath('/factory');
   return { success: true };
+}
+
+// 3b. Purge All NIL Loose Stock
+export async function purgeNilLooseLots() {
+  const { user, role } = await enforceFactoryAccess();
+  if (!['admin', 'manager'].includes(role)) {
+    return { error: 'Only admins and managers can purge empty stock.' };
+  }
+
+  const systemIds = ['l-balance', 'l-orthodox', 'l-cardamom', 'l-cardamom-husk'];
+
+  // 1. Fetch IDs of lots to delete
+  const { data: lotsToDelete, error: fetchErr } = await supabaseAdmin
+    .from('factory_loose_lots')
+    .select('id, lot_number, mark')
+    .or('bags.lte.0,weight.lte.0')
+    .not('id', 'in', `(${systemIds.join(',')})`);
+
+  if (fetchErr) {
+    console.error('Error finding NIL lots to purge:', fetchErr);
+    return { error: fetchErr.message };
+  }
+
+  if (!lotsToDelete || lotsToDelete.length === 0) {
+    return { success: true, count: 0, message: 'No NIL stock lots found to purge.' };
+  }
+
+  const ids = lotsToDelete.map(l => l.id);
+
+  // 2. Batch delete in a single atomic SQL command
+  const { error: deleteErr } = await supabaseAdmin
+    .from('factory_loose_lots')
+    .delete()
+    .in('id', ids);
+
+  if (deleteErr) {
+    console.error('Error batch deleting NIL lots:', deleteErr);
+    return { error: deleteErr.message };
+  }
+
+  // 3. Log single immutable audit history entry
+  await supabaseAdmin.from('factory_history').insert({
+    id: `hst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    type: 'NIL_STOCK_PURGED',
+    description: `Purged ${ids.length} empty (NIL) loose tea lots from warehouse.`,
+    user_id: user.id,
+    user_name: user.user_metadata?.name || user.email,
+    details: {
+      count: ids.length,
+      sample_lots: lotsToDelete.slice(0, 10).map(l => `${l.mark} (${l.lot_number})`)
+    }
+  });
+
+  revalidatePath('/factory');
+  return { success: true, count: ids.length };
 }
 
 // 4. Fetch Active Blends (Under Process)

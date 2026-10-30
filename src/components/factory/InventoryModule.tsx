@@ -11,6 +11,7 @@ interface InventoryModuleProps {
   setPacketCatalog: (val: CatalogProduct[] | ((prev: CatalogProduct[]) => CatalogProduct[])) => void;
   onDeleteLoose: (id: string) => void;
   onPurgeNilLoose: () => void;
+  isPurging?: boolean;
   onEditLooseItem: (id: string, data: Partial<LooseLot>) => void;
   onEditCatalogProduct: (id: string, data: Partial<CatalogProduct>) => void;
   onDeleteCatalog: (id: string) => void;
@@ -32,6 +33,7 @@ export default function InventoryModule({
   setPacketCatalog,
   onDeleteLoose, 
   onPurgeNilLoose,
+  isPurging = false,
   onEditLooseItem,
   onEditCatalogProduct,
   onDeleteCatalog, 
@@ -245,6 +247,12 @@ export default function InventoryModule({
     setNewProductForm({ name: '', unit: 'KG', size: '', hsnCode: '', gstRate: '5' });
     setShowAddNewProduct(false);
   };
+
+  // Count of NIL stock lots eligible for purge
+  const nilCount = useMemo(() => {
+    const systemIds = ["l-balance", "l-orthodox", "l-cardamom", "l-cardamom-husk"];
+    return looseInventory.filter(item => !systemIds.includes(item.id) && (Number(item.bags) <= 0 || Number(item.weight) <= 0)).length;
+  }, [looseInventory]);
 
   // Unique filter options extracted dynamically from inventory
   const filterOptions = useMemo(() => {
@@ -590,14 +598,24 @@ export default function InventoryModule({
                     onPurgeNilLoose();
                   }
                 }}
+                disabled={isPurging || nilCount === 0}
                 className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 ${
-                  isCatalogUnlocked 
-                    ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200' 
-                    : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                  isCatalogUnlocked && nilCount > 0
+                    ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 cursor-pointer' 
+                    : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-70'
                 }`}
-                title={!isCatalogUnlocked ? "Unlock Catalog to Purge NIL Stock" : "Delete all empty loose lots in one click"}
+                title={!isCatalogUnlocked ? "Unlock Catalog to Purge NIL Stock" : nilCount === 0 ? "No empty lots to purge" : "Delete all empty loose lots in one click"}
               >
-                <Trash2 size={16} /> Purge NIL Stock
+                {isPurging ? (
+                  <>
+                    <Clock size={16} className="animate-spin text-rose-600" />
+                    Purging...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={16} /> Purge NIL Stock {nilCount > 0 ? `(${nilCount})` : ''}
+                  </>
+                )}
               </button>
               {systemUser.role !== 'user' && (
                 <button 

@@ -25,6 +25,7 @@ import {
   fetchLooseLots,
   saveLooseLot,
   deleteLooseLot,
+  purgeNilLooseLots,
   fetchUnderProcessBlends,
   createFactoryBlend,
   finalizeFactoryBlend,
@@ -176,7 +177,7 @@ export default function FactoryDashboardClient({
 
   const handlePurgeNilLooseStock = () => {
     const systemIds = ["l-balance", "l-orthodox", "l-cardamom", "l-cardamom-husk"];
-    const nilLots = looseInventory.filter(item => !systemIds.includes(item.id) && (item.bags <= 0 || item.weight <= 0));
+    const nilLots = looseInventory.filter(item => !systemIds.includes(item.id) && (Number(item.bags) <= 0 || Number(item.weight) <= 0));
     if (nilLots.length === 0) {
       triggerToast("No NIL stock lots found to purge.", "error");
       return;
@@ -184,14 +185,16 @@ export default function FactoryDashboardClient({
 
     setConfirmModal({
       title: "Purge All NIL Stock?",
-      message: `Are you sure you want to delete all ${nilLots.length} empty loose tea lots?`,
+      message: `Are you sure you want to permanently delete all ${nilLots.length} empty loose tea lots?`,
       onConfirm: () => {
         startTransition(async () => {
-          for (const lot of nilLots) {
-            await deleteLooseLot(lot.id);
+          const res = await purgeNilLooseLots();
+          if (res?.error) {
+            triggerToast(res.error, "error");
+          } else {
+            setLooseInventory(prev => prev.filter(item => systemIds.includes(item.id) || (Number(item.bags) > 0 && Number(item.weight) > 0)));
+            triggerToast(`Successfully purged ${res?.count ?? nilLots.length} NIL stock lots.`);
           }
-          setLooseInventory(prev => prev.filter(item => systemIds.includes(item.id) || (item.bags > 0 && item.weight > 0)));
-          triggerToast(`Purged ${nilLots.length} NIL stock lots.`);
         });
       }
     });
@@ -310,6 +313,7 @@ export default function FactoryDashboardClient({
             historyList={historyList}
             onDeleteLoose={handleDeleteLooseItem}
             onPurgeNilLoose={handlePurgeNilLooseStock}
+            isPurging={isPending}
             onEditLooseItem={handleEditLooseItem}
             onEditCatalogProduct={() => { }}
             onDeleteCatalog={() => { }}
