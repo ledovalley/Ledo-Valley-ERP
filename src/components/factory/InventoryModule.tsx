@@ -141,13 +141,16 @@ export default function InventoryModule({
 
   const handleLedgerAdjustmentSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!onLedgerAdjustment) return;
+    if (!onLedgerAdjustment) {
+      triggerToast('Ledger adjustment handler not available', 'error');
+      return;
+    }
     const amount = parseFloat(ledgerAdjustmentForm.amount);
-    if (!amount) return triggerToast('Please enter a valid amount', 'error');
+    if (!amount || isNaN(amount)) return triggerToast('Please enter a valid amount', 'error');
     if (!ledgerAdjustmentForm.reason.trim()) return triggerToast('Please provide a reason for this adjustment', 'error');
     if (!ledgerAdjustmentForm.targetId) return triggerToast('Please select a target ledger/lot', 'error');
     
-    onLedgerAdjustment(ledgerAdjustmentForm.targetId, amount, ledgerAdjustmentForm.reason);
+    onLedgerAdjustment(ledgerAdjustmentForm.targetId, amount, ledgerAdjustmentForm.reason.trim());
     setLedgerAdjustmentForm({ targetId: 'l-balance', amount: '', reason: '' });
     setShowLedgerAdjustment(false);
   };
@@ -480,8 +483,8 @@ export default function InventoryModule({
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-[0_10px_30px_rgba(11,23,43,0.04)] border border-[#0B172B]/8 h-full flex flex-col overflow-hidden">
-      <div className="p-6 border-b border-[#0B172B]/8 bg-white">
+    <div className="bg-white rounded-2xl shadow-[0_10px_30px_rgba(11,23,43,0.04)] border border-[#0B172B]/8 flex flex-col overflow-hidden">
+      <div className="p-4 sm:p-5 border-b border-[#0B172B]/8 bg-white">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
           <div>
             <h2 className="text-xl font-bold text-[#0B172B] font-sans">Warehouse Stockroom</h2>
@@ -950,14 +953,14 @@ export default function InventoryModule({
             <>
               <thead className="bg-[#F0F5F9] sticky top-0 z-10">
                 <tr>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Mark Name</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Lot/Batch No.</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Grade</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-right">No. of Bags</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-right">Per Bag Wt</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B] uppercase tracking-wider border-b border-[#0B172B]/8 text-right bg-[#F0F5F9]">Total Qty (kg)</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Labels</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-center">Actions</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Mark Name</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Lot/Batch No.</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Grade</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-right">No. of Bags</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-right">Per Bag Wt</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B] uppercase tracking-wider border-b border-[#0B172B]/8 text-right bg-[#F0F5F9]">Total Qty (kg)</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Labels</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#0B172B]/5 text-sm">
@@ -975,35 +978,35 @@ export default function InventoryModule({
                         className={`group hover:bg-[#F0F5F9]/50 transition-all cursor-pointer ${item.bags === 0 && item.weight <= 0 ? 'bg-[#F0F5F9]/50 text-[#0B172B]/40 opacity-60' : ''}`}
                         onClick={() => setSelectedLotForAudit({ type: 'loose', item })}
                       >
-                        <td className="p-4">
+                        <td className="px-3.5 py-2.5">
                           <div className="font-bold text-slate-900 group-hover:text-[#009965] transition-colors">{item.mark}</div>
                         </td>
-                        <td className="p-4">
+                        <td className="px-3.5 py-2.5">
                           <div className="font-semibold text-slate-800">{item.lotNumber}</div>
                           {item.id !== 'l-balance' && (
-                            <div className="flex items-center gap-1.5 mt-1">
+                            <div className="flex items-center gap-1.5 mt-0.5">
                               {isVeryOld ? (
-                                <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold flex items-center gap-1 whitespace-nowrap"><Clock size={10} /> &gt; 9 Mo Old</span>
+                                <span className="text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold flex items-center gap-1 whitespace-nowrap"><Clock size={9} /> &gt; 9 Mo Old</span>
                               ) : isOld ? (
-                                <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold flex items-center gap-1 whitespace-nowrap"><Clock size={10} /> 6+ Mo Old</span>
+                                <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold flex items-center gap-1 whitespace-nowrap"><Clock size={9} /> 6+ Mo Old</span>
                               ) : (
                                 <span className="text-[10px] text-slate-400 font-mono">{item.date}</span>
                               )}
                             </div>
                           )}
                         </td>
-                        <td className="p-4 font-medium text-slate-700">{item.grade}</td>
-                        <td className="p-4 text-right font-medium text-slate-800">{item.id.startsWith('l-') ? '-' : `${item.bags} bags`}</td>
-                        <td className="p-4 text-right text-slate-600 font-mono">{item.id.startsWith('l-') ? '-' : (item.weightPerBag ? `${parseFloat(item.weightPerBag.toString()).toFixed(2)} kg` : '-')}</td>
-                        <td className="p-4 text-right font-bold text-slate-900 bg-slate-50 font-mono">{item.weight.toFixed(2)} kg</td>
-                        <td className="p-4">
+                        <td className="px-3.5 py-2.5 font-medium text-slate-700">{item.grade}</td>
+                        <td className="px-3.5 py-2.5 text-right font-medium text-slate-800">{item.id.startsWith('l-') ? '-' : `${item.bags} bags`}</td>
+                        <td className="px-3.5 py-2.5 text-right text-slate-600 font-mono">{item.id.startsWith('l-') ? '-' : (item.weightPerBag ? `${parseFloat(item.weightPerBag.toString()).toFixed(2)} kg` : '-')}</td>
+                        <td className="px-3.5 py-2.5 text-right font-bold text-slate-900 bg-slate-50 font-mono">{item.weight.toFixed(2)} kg</td>
+                        <td className="px-3.5 py-2.5">
                           <div className="flex flex-wrap gap-1">
                             {(item.labels || []).map((lbl, idx) => (
-                              <span key={idx} className="bg-slate-100 text-slate-700 border border-slate-200 text-[10px] px-2 py-0.5 rounded font-medium">{lbl}</span>
+                              <span key={idx} className="bg-slate-100 text-slate-700 border border-slate-200 text-[10px] px-1.5 py-0.5 rounded font-medium">{lbl}</span>
                             ))}
                           </div>
                         </td>
-                        <td className="p-4 text-center">
+                        <td className="px-3.5 py-2.5 text-center">
                           <div className="flex items-center justify-center gap-2">
                             {item.id.startsWith('l-') ? (
                               <div className="flex flex-col gap-1 items-center">
@@ -1053,14 +1056,14 @@ export default function InventoryModule({
             <>
               <thead className="bg-[#F0F5F9] sticky top-0 z-10">
                 <tr>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Product Name</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-center">HSN Code</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-center">GST %</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Tracking Stock Unit</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-right">Unit Multiplier (kg/unit)</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-right">Units In Stock</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B] uppercase tracking-wider border-b border-[#0B172B]/8 text-right bg-[#F0F5F9]">Combined Net Weight (kg)</th>
-                  <th className="p-4 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-center">Catalog Security Actions</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Product Name</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-center">HSN Code</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-center">GST %</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Tracking Stock Unit</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-right">Unit Multiplier (kg/unit)</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-right">Units In Stock</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B] uppercase tracking-wider border-b border-[#0B172B]/8 text-right bg-[#F0F5F9]">Combined Net Weight (kg)</th>
+                  <th className="px-3.5 py-3 font-bold text-[10px] text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-center">Catalog Security Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#0B172B]/5 text-sm">
@@ -1076,22 +1079,22 @@ export default function InventoryModule({
                         className={`group hover:bg-slate-50 transition-all cursor-pointer ${item.stock === 0 ? 'bg-slate-50/50 text-slate-400 opacity-60' : ''}`}
                         onClick={() => setSelectedLotForAudit({ type: 'catalog', item })}
                       >
-                        <td className="p-4 font-bold text-slate-800 group-hover:text-emerald-700 transition-colors">{item.name}</td>
-                        <td className="p-4 text-center text-slate-500 font-mono text-xs">{item.hsnCode || '-'}</td>
-                        <td className="p-4 text-center text-slate-500 font-mono text-xs">{item.gstRate !== undefined ? `${item.gstRate}%` : '5%'}</td>
-                        <td className="p-4 font-medium">
+                        <td className="px-3.5 py-2.5 font-bold text-slate-800 group-hover:text-emerald-700 transition-colors">{item.name}</td>
+                        <td className="px-3.5 py-2.5 text-center text-slate-500 font-mono text-xs">{item.hsnCode || '-'}</td>
+                        <td className="px-3.5 py-2.5 text-center text-slate-500 font-mono text-xs">{item.gstRate !== undefined ? `${item.gstRate}%` : '5%'}</td>
+                        <td className="px-3.5 py-2.5 font-medium">
                           <span className={`px-2 py-1 rounded text-xs font-semibold ${item.unit === 'Bundle' ? 'bg-amber-50 text-amber-700 border border-amber-200/50' : 'bg-blue-50 text-blue-700 border border-blue-200/50'}`}>
                             {item.unit}
                           </span>
                         </td>
-                        <td className="p-4 text-right text-slate-600 font-mono">{parseFloat(item.size.toString()).toFixed(3)} kg</td>
-                        <td className="p-4 text-right font-bold text-slate-700 font-mono">
+                        <td className="px-3.5 py-2.5 text-right text-slate-600 font-mono">{parseFloat(item.size.toString()).toFixed(3)} kg</td>
+                        <td className="px-3.5 py-2.5 text-right font-bold text-slate-700 font-mono">
                           {Number.isInteger(item.stock) ? item.stock : parseFloat(item.stock.toString()).toFixed(3)} {item.unit}(s)
                         </td>
-                        <td className="p-4 text-right font-black text-slate-950 bg-slate-100 font-mono">
+                        <td className="px-3.5 py-2.5 text-right font-black text-slate-950 bg-slate-100 font-mono">
                           {(item.stock * item.size).toFixed(2)} kg
                         </td>
-                        <td className="p-4 text-center">
+                        <td className="px-3.5 py-2.5 text-center">
                           {item.id === 'p-variance' ? (
                             <div className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2 py-1 rounded tracking-wide">
                               <Shield size={12} className="text-emerald-500" /> SYSTEM LEDGER

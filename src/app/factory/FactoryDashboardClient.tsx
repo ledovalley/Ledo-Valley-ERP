@@ -26,6 +26,7 @@ import {
   saveLooseLot,
   deleteLooseLot,
   purgeNilLooseLots,
+  adjustLedgerLot,
   fetchUnderProcessBlends,
   createFactoryBlend,
   finalizeFactoryBlend,
@@ -200,6 +201,27 @@ export default function FactoryDashboardClient({
     });
   };
 
+  const handleLedgerAdjustment = (targetId: string, amount: number, reason: string) => {
+    startTransition(async () => {
+      const res = await adjustLedgerLot(targetId, amount, reason);
+      if (res?.error) {
+        triggerToast(res.error, "error");
+      } else {
+        const updatedWeight = res.newWeight ?? 0;
+        setLooseInventory(prev => prev.map(item => {
+          if (item.id === targetId) {
+            return {
+              ...item,
+              weight: updatedWeight
+            };
+          }
+          return item;
+        }));
+        triggerToast(`Adjusted ledger weight by ${amount > 0 ? "+" : ""}${amount} kg.`);
+      }
+    });
+  };
+
   const handleEditLooseItem = (id: string, updatedData: any) => {
     startTransition(async () => {
       const existing = looseInventory.find(l => l.id === id);
@@ -257,7 +279,7 @@ export default function FactoryDashboardClient({
   ];
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col min-h-screen">
       {/* Toast Notification */}
       {toast && (
         <div
@@ -285,7 +307,7 @@ export default function FactoryDashboardClient({
       )}
 
       {/* Sticky Top Navbar Controlling Factory Navigation */}
-      <div className="shrink-0 print:hidden">
+      <div className="sticky top-0 z-30 pt-1 pb-3 -mt-1 bg-gradient-to-b from-[#FAFBF8] via-[#F6F7F2]/95 to-transparent backdrop-blur-xs print:hidden">
         <TopNavbar
           userRole={userRole}
           userEmail={userEmail}
@@ -302,8 +324,8 @@ export default function FactoryDashboardClient({
         />
       </div>
 
-      {/* Scrollable Tab Panels Container */}
-      <div className="flex-1 min-h-0 overflow-y-auto print:hidden">
+      {/* Main Tab Panels Container */}
+      <div className="w-full pb-8 print:hidden">
         {activeTab === "inventory" && (
           <InventoryModule
             looseInventory={looseInventory}
@@ -314,6 +336,7 @@ export default function FactoryDashboardClient({
             onDeleteLoose={handleDeleteLooseItem}
             onPurgeNilLoose={handlePurgeNilLooseStock}
             isPurging={isPending}
+            onLedgerAdjustment={handleLedgerAdjustment}
             onEditLooseItem={handleEditLooseItem}
             onEditCatalogProduct={() => { }}
             onDeleteCatalog={() => { }}

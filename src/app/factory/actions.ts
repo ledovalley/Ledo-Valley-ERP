@@ -186,6 +186,61 @@ export async function purgeNilLooseLots() {
   return { success: true, count: ids.length };
 }
 
+// 3c. Adjust System Ledger / Lot Weight
+export async function adjustLedgerLot(targetId: string, amount: number, reason: string) {
+  const { user, role } = await enforceFactoryAccess();
+  if (!['admin', 'manager'].includes(role)) {
+    return { error: 'Only admins and managers can adjust system ledgers.' };
+  }
+
+  // 1. Fetch current lot
+  const { data: lot, error: fetchErr } = await supabaseAdmin
+    .from('factory_loose_lots')
+    .select('*')
+    .eq('id', targetId)
+    .single();
+
+  if (fetchErr || !lot) {
+    return { error: fetchErr?.message || 'Ledger lot not found.' };
+  }
+
+  const prevWeight = Number(lot.weight);
+  const newWeight = Math.max(0, Number((prevWeight + amount).toFixed(3)));
+
+  // 2. Update weight
+  const { error: updateErr } = await supabaseAdmin
+    .from('factory_loose_lots')
+    .update({
+      weight: newWeight,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', targetId);
+
+  if (updateErr) {
+    return { error: updateErr.message };
+  }
+
+  // 3. Log audit history
+  await supabaseAdmin.from('factory_history').insert({
+    id: `hst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    type: 'LEDGER_ADJUSTMENT',
+    description: `Adjusted ${lot.mark} by ${amount > 0 ? '+' : ''}${amount} kg. Reason: ${reason}`,
+    user_id: user.id,
+    user_name: user.user_metadata?.name || user.email,
+    details: {
+      target_id: targetId,
+      mark: lot.mark,
+      prev_weight: prevWeight,
+      adjustment_amount: amount,
+      new_weight: newWeight,
+      reason
+    }
+  });
+
+  revalidatePath('/factory');
+  return { success: true, newWeight };
+}
+
 // 4. Fetch Active Blends (Under Process)
 export async function fetchUnderProcessBlends() {
   await enforceFactoryAccess();
