@@ -26,7 +26,7 @@ export interface BlendProcess {
   batchNo: string;
   date: string;
   lotsUsed: {
-    lotId: string;
+    lotId?: string | null;
     lotNumber: string;
     mark: string;
     grade?: string;

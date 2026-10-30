@@ -39,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_factory_blends_date ON public.factory_blends(date
 CREATE TABLE IF NOT EXISTS public.factory_blend_lots_used (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     blend_id TEXT NOT NULL REFERENCES public.factory_blends(id) ON DELETE CASCADE,
-    lot_id TEXT NOT NULL REFERENCES public.factory_loose_lots(id),
+    lot_id TEXT REFERENCES public.factory_loose_lots(id) ON DELETE SET NULL,
     lot_number TEXT NOT NULL,
     mark TEXT NOT NULL,
     grade TEXT,
@@ -284,12 +284,14 @@ BEGIN
         SELECT * FROM public.factory_blend_lots_used 
         WHERE blend_id = p_blend_id
     LOOP
-        UPDATE public.factory_loose_lots
-        SET 
-            weight = weight + v_lot_used.weight_used,
-            bags = bags + COALESCE(v_lot_used.bags_used, 0),
-            updated_at = NOW()
-        WHERE id = v_lot_used.lot_id;
+        IF v_lot_used.lot_id IS NOT NULL THEN
+            UPDATE public.factory_loose_lots
+            SET 
+                weight = weight + v_lot_used.weight_used,
+                bags = bags + COALESCE(v_lot_used.bags_used, 0),
+                updated_at = NOW()
+            WHERE id = v_lot_used.lot_id;
+        END IF;
     END LOOP;
 
     -- Delete or Mark Cancelled
