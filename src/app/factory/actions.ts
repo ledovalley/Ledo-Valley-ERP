@@ -45,6 +45,162 @@ export async function fetchLooseLots() {
   }));
 }
 
+// 1b. Fetch All Factory Packet Catalog Products
+export async function fetchPacketCatalog() {
+  await enforceFactoryAccess();
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from('factory_packet_catalog')
+    .select('*')
+    .order('name', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching factory packet catalog:', error);
+    return [];
+  }
+
+  return (data || []).map(row => ({
+    id: row.id,
+    name: row.name,
+    unit: row.unit || 'KG',
+    size: Number(row.size) || 1,
+    stock: Number(row.stock) || 0,
+    hsnCode: row.hsn_code || '',
+    gstRate: Number(row.gst_rate) || 5
+  }));
+}
+
+// 1c. Add / Edit Factory Packet Product Template
+export async function savePacketProduct(product: {
+  id?: string;
+  name: string;
+  unit: string;
+  size: number;
+  stock?: number;
+  hsnCode?: string;
+  gstRate?: number;
+}) {
+  const { user, role } = await enforceFactoryAccess();
+  if (!['admin', 'manager'].includes(role)) {
+    return { error: 'Only admins and managers can modify factory product templates.' };
+  }
+
+  const productId = product.id || `p-${Date.now()}`;
+  const payload = {
+    id: productId,
+    name: product.name.trim(),
+    unit: product.unit || 'KG',
+    size: product.size || 1,
+    stock: product.stock !== undefined ? product.stock : 0,
+    hsn_code: product.hsnCode || '',
+    gst_rate: product.gstRate !== undefined ? product.gstRate : 5,
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabaseAdmin
+    .from('factory_packet_catalog')
+    .upsert(payload, { onConflict: 'id' });
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  await supabaseAdmin.from('factory_history').insert({
+    id: `hst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    type: product.id ? 'PACKET_TEMPLATE_UPDATED' : 'PACKET_TEMPLATE_CREATED',
+    description: `${product.id ? 'Updated' : 'Created'} packet template: ${product.name} (${product.size} kg/${product.unit})`,
+    user_id: user.id,
+    user_name: user.user_metadata?.name || user.email
+  });
+
+  revalidatePath('/factory');
+  return { success: true, id: productId };
+}
+
+// 1d. Delete Factory Packet Product Template
+export async function deletePacketProduct(productId: string) {
+  const { user, role } = await enforceFactoryAccess();
+  if (!['admin', 'manager'].includes(role)) {
+    return { error: 'Only admins and managers can delete product templates.' };
+  }
+
+  if (productId === 'p-variance') {
+    return { error: 'System variance tracking ledger cannot be deleted.' };
+  }
+
+  const { error } = await supabaseAdmin
+    .from('factory_packet_catalog')
+    .delete()
+    .eq('id', productId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  await supabaseAdmin.from('factory_history').insert({
+    id: `hst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    type: 'PACKET_TEMPLATE_DELETED',
+    description: `Deleted packet template: ${productId}`,
+    user_id: user.id,
+    user_name: user.user_metadata?.name || user.email
+  });
+
+  revalidatePath('/factory');
+  return { success: true };
+}
+
+// 1e. Receive Packaged Stock
+export async function receivePacketStock(data: {
+  productId: string;
+  quantity: number;
+  date: string;
+}) {
+  const { user, role } = await enforceFactoryAccess();
+  if (!['admin', 'manager'].includes(role)) {
+    return { error: 'Only admins and managers can receive packaged stock.' };
+  }
+
+  const { data: current, error: fetchErr } = await supabaseAdmin
+    .from('factory_packet_catalog')
+    .select('*')
+    .eq('id', data.productId)
+    .single();
+
+  if (fetchErr || !current) {
+    return { error: fetchErr?.message || 'Product not found in packet catalog.' };
+  }
+
+  const newStock = Number(current.stock) + data.quantity;
+
+  const { error: updateErr } = await supabaseAdmin
+    .from('factory_packet_catalog')
+    .update({ stock: newStock, updated_at: new Date().toISOString() })
+    .eq('id', data.productId);
+
+  if (updateErr) {
+    return { error: updateErr.message };
+  }
+
+  await supabaseAdmin.from('factory_history').insert({
+    id: `hst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    type: 'PACKET_STOCK_RECEIVED',
+    description: `Received ${data.quantity} ${current.unit}(s) of "${current.name}". New Stock: ${newStock}`,
+    user_id: user.id,
+    user_name: user.user_metadata?.name || user.email,
+    details: {
+      productId: data.productId,
+      productName: current.name,
+      addedQuantity: data.quantity,
+      newStock,
+      date: data.date
+    }
+  });
+
+  revalidatePath('/factory');
+  return { success: true, newStock };
+}
+
 // 2. Add / Edit Loose Lot
 export async function saveLooseLot(lot: {
   id: string;

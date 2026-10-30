@@ -27,6 +27,9 @@ import {
   deleteLooseLot,
   purgeNilLooseLots,
   adjustLedgerLot,
+  savePacketProduct,
+  deletePacketProduct,
+  receivePacketStock,
   fetchUnderProcessBlends,
   createFactoryBlend,
   finalizeFactoryBlend,
@@ -255,8 +258,91 @@ export default function FactoryDashboardClient({
     });
   };
 
-  const handleAddCatalogProduct = () => {
-    triggerToast("Manage packet products directly in ERP Settings.", "error");
+  const handleAddCatalogProduct = (product: { name: string; unit: string; size: number; hsnCode?: string; gstRate?: number }) => {
+    startTransition(async () => {
+      const res = await savePacketProduct(product);
+      if (res?.error) {
+        triggerToast(res.error, "error");
+      } else {
+        const newProduct: CatalogProduct = {
+          id: res.id || `p-${Date.now()}`,
+          name: product.name,
+          unit: product.unit,
+          size: product.size,
+          stock: 0,
+          hsnCode: product.hsnCode || "",
+          gstRate: product.gstRate || 5
+        };
+        setPacketCatalog(prev => [...prev, newProduct]);
+        triggerToast(`Added "${product.name}" to factory packet catalog!`);
+      }
+    });
+  };
+
+  const handleEditCatalogProduct = (id: string, updatedData: Partial<CatalogProduct>) => {
+    startTransition(async () => {
+      const existing = packetCatalog.find(p => p.id === id);
+      if (!existing) return;
+
+      const payload = {
+        id,
+        name: updatedData.name || existing.name,
+        unit: updatedData.unit || existing.unit,
+        size: updatedData.size !== undefined ? updatedData.size : existing.size,
+        stock: updatedData.stock !== undefined ? updatedData.stock : existing.stock,
+        hsnCode: updatedData.hsnCode !== undefined ? updatedData.hsnCode : existing.hsnCode,
+        gstRate: updatedData.gstRate !== undefined ? updatedData.gstRate : existing.gstRate
+      };
+
+      const res = await savePacketProduct(payload);
+      if (res?.error) {
+        triggerToast(res.error, "error");
+      } else {
+        setPacketCatalog(prev => prev.map(p => (p.id === id ? { ...p, ...payload } : p)));
+        triggerToast(`Updated "${payload.name}" in factory packet catalog.`);
+      }
+    });
+  };
+
+  const handleDeleteCatalogProduct = (id: string) => {
+    const existing = packetCatalog.find(p => p.id === id);
+    if (id === 'p-variance') {
+      triggerToast("System variance ledger cannot be deleted.", "error");
+      return;
+    }
+
+    setConfirmModal({
+      title: "Delete Packet Product Template?",
+      message: `Are you sure you want to delete "${existing?.name || id}" from the packet catalog?`,
+      onConfirm: () => {
+        startTransition(async () => {
+          const res = await deletePacketProduct(id);
+          if (res?.error) {
+            triggerToast(res.error, "error");
+          } else {
+            setPacketCatalog(prev => prev.filter(p => p.id !== id));
+            triggerToast("Product template deleted from packet catalog.");
+          }
+        });
+      }
+    });
+  };
+
+  const handleReceivePacketStock = async (productId: string, quantity: number, date: string) => {
+    startTransition(async () => {
+      const res = await receivePacketStock({ productId, quantity, date });
+      if (res?.error) {
+        triggerToast(res.error, "error");
+      } else {
+        setPacketCatalog(prev => prev.map(p => {
+          if (p.id === productId) {
+            return { ...p, stock: res.newStock ?? (p.stock + quantity) };
+          }
+          return p;
+        }));
+        triggerToast("Packaged stock updated in database.");
+      }
+    });
   };
 
   const handleRevertAndEditProcess = (blend: BlendProcess) => {
@@ -338,8 +424,9 @@ export default function FactoryDashboardClient({
             isPurging={isPending}
             onLedgerAdjustment={handleLedgerAdjustment}
             onEditLooseItem={handleEditLooseItem}
-            onEditCatalogProduct={() => { }}
-            onDeleteCatalog={() => { }}
+            onEditCatalogProduct={handleEditCatalogProduct}
+            onDeleteCatalog={handleDeleteCatalogProduct}
+            onReceivePacketStock={handleReceivePacketStock}
             isCatalogUnlocked={userRole === "admin" || userRole === "manager"}
             onUnlockRequest={() => triggerToast("Role-based permissions are active.")}
             onLockRequest={() => { }}

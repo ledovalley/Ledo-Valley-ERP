@@ -177,7 +177,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-[#0B172B]/8 h-full flex flex-col overflow-hidden relative shadow-[0_10px_30px_rgba(11,23,43,0.04)]">
+      <div className="bg-white rounded-2xl border border-[#0B172B]/8 flex flex-col overflow-hidden relative shadow-[0_10px_30px_rgba(11,23,43,0.04)]">
 
         {traceModalData && traceModalData.details && (
           <div className="fixed inset-0 bg-[#0B172B]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">

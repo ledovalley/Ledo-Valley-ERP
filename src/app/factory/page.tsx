@@ -2,10 +2,10 @@ import { getCachedUser } from "@/utils/supabase/server";
 import { redirect } from "next/navigation";
 import {
   fetchLooseLots,
+  fetchPacketCatalog,
   fetchUnderProcessBlends,
   fetchFactoryHistory
 } from "./actions";
-import { fetchAllProducts } from "@/app/dashboard/settings/actions";
 import { signOut } from "@/app/dashboard/actions";
 import FactoryDashboardClient from "./FactoryDashboardClient";
 import { CatalogProduct } from "@/types/factory";
@@ -27,23 +27,12 @@ export default async function FactoryPage() {
   const lastSignInAt = user.last_sign_in_at;
 
   // Fetch initial state in parallel
-  const [lots, blends, historyRows, productsData] = await Promise.all([
+  const [lots, blends, historyRows, catalogProducts] = await Promise.all([
     fetchLooseLots(),
     fetchUnderProcessBlends(),
     fetchFactoryHistory(),
-    fetchAllProducts()
+    fetchPacketCatalog()
   ]);
-
-  // Map ERP products to CatalogProduct format
-  const catalogProducts: CatalogProduct[] = productsData.map((p: any) => ({
-    id: p.id,
-    name: p.name,
-    unit: p.unit || "kg",
-    size: p.size || 1,
-    stock: p.stock || 0,
-    hsnCode: p.hsn_code,
-    gstRate: p.gst_rate
-  }));
 
   // Map history rows to HistoryRecord
   const historyRecords = historyRows.map((h: any) => ({

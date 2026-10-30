@@ -15,6 +15,7 @@ interface InventoryModuleProps {
   onEditLooseItem: (id: string, data: Partial<LooseLot>) => void;
   onEditCatalogProduct: (id: string, data: Partial<CatalogProduct>) => void;
   onDeleteCatalog: (id: string) => void;
+  onReceivePacketStock?: (productId: string, quantity: number, date: string) => void;
   isCatalogUnlocked: boolean;
   onUnlockRequest: () => void;
   onLockRequest: () => void;
@@ -37,6 +38,7 @@ export default function InventoryModule({
   onEditLooseItem,
   onEditCatalogProduct,
   onDeleteCatalog, 
+  onReceivePacketStock,
   isCatalogUnlocked,
   onUnlockRequest,
   onLockRequest,
@@ -123,13 +125,18 @@ export default function InventoryModule({
     e.preventDefault();
     if (!packetForm.productId) return triggerToast("Please select a packet product master item", "error");
     const qtyToAdd = parseFloat(packetForm.quantity);
+    if (!qtyToAdd || isNaN(qtyToAdd) || qtyToAdd <= 0) return triggerToast("Please enter a valid quantity", "error");
 
-    setPacketCatalog(prev => prev.map(p => {
-      if (p.id === packetForm.productId) {
-        return { ...p, stock: p.stock + qtyToAdd };
-      }
-      return p;
-    }));
+    if (onReceivePacketStock) {
+      onReceivePacketStock(packetForm.productId, qtyToAdd, packetForm.date);
+    } else {
+      setPacketCatalog(prev => prev.map(p => {
+        if (p.id === packetForm.productId) {
+          return { ...p, stock: p.stock + qtyToAdd };
+        }
+        return p;
+      }));
+    }
 
     if (selectedProductDetail) {
       logSystemAction('ADD_STOCK', `Added ${qtyToAdd} ${selectedProductDetail.unit}(s) to product: ${selectedProductDetail.name}`);
@@ -516,49 +523,49 @@ export default function InventoryModule({
           </div>
         </div>
         
-        <div className="flex border-b border-[#0B172B]/8 mb-4">
+        <div className="flex border-b border-[#0B172B]/8 mb-4 overflow-x-auto no-scrollbar">
           <button 
             onClick={() => setActiveTab('loose')} 
-            className={`py-3 px-6 border-b-2 font-semibold text-sm transition-all flex items-center gap-2 ${activeTab === 'loose' ? 'border-[#009965] text-[#009965]' : 'border-transparent text-[#0B172B]/55 hover:text-[#0B172B]'}`}
+            className={`py-2.5 sm:py-3 px-4 sm:px-6 border-b-2 font-semibold text-xs sm:text-sm transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'loose' ? 'border-[#009965] text-[#009965]' : 'border-transparent text-[#0B172B]/55 hover:text-[#0B172B]'}`}
           >
             <Boxes size={18} />
             Raw Loose Tea Stock
           </button>
           <button 
             onClick={() => setActiveTab('packet')} 
-            className={`py-3 px-6 border-b-2 font-semibold text-sm transition-all flex items-center gap-2 ${activeTab === 'packet' ? 'border-[#009965] text-[#009965]' : 'border-transparent text-[#0B172B]/55 hover:text-[#0B172B]'}`}
+            className={`py-2.5 sm:py-3 px-4 sm:px-6 border-b-2 font-semibold text-xs sm:text-sm transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'packet' ? 'border-[#009965] text-[#009965]' : 'border-transparent text-[#0B172B]/55 hover:text-[#0B172B]'}`}
           >
             <PackagePlus size={18} />
             Packet Stock Catalog
           </button>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-4">
-          <div className="flex-[2] flex items-center gap-2 bg-[#F0F5F9]/50 p-3 rounded-xl border border-[#0B172B]/8">
-            <Filter size={18} className="text-[#0B172B]/40" />
+        <div className="flex flex-wrap items-center gap-2.5 mb-4">
+          <div className="w-full sm:flex-1 min-w-[200px] flex items-center gap-2 bg-[#F0F5F9]/50 p-2.5 sm:p-3 rounded-xl border border-[#0B172B]/8">
+            <Filter size={18} className="text-[#0B172B]/40 shrink-0" />
             <input 
               type="text" 
               placeholder={activeTab === 'loose' ? "Search lot, grade, mark or labels..." : "Search product templates..."}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="bg-transparent border-none focus:ring-0 w-full text-sm outline-none font-sans font-medium text-[#0B172B] placeholder-[#0B172B]/40"
+              className="bg-transparent border-none focus:ring-0 w-full text-xs sm:text-sm outline-none font-sans font-medium text-[#0B172B] placeholder-[#0B172B]/40"
             />
           </div>
 
-          <div className="flex border border-[#0B172B]/10 rounded-xl overflow-hidden shadow-sm shrink-0 h-10">
+          <div className="flex border border-[#0B172B]/10 rounded-xl overflow-hidden shadow-xs shrink-0 h-9 sm:h-10">
             <button 
               onClick={activeTab === 'loose' ? exportLooseCSV : exportPacketCSV}
-              className="px-4 bg-white hover:bg-[#F0F5F9] text-[#0B172B]/80 text-xs font-bold transition-all flex items-center justify-center gap-2 border-r border-[#0B172B]/10"
+              className="px-3 sm:px-4 bg-white hover:bg-[#F0F5F9] text-[#0B172B]/80 text-xs font-bold transition-all flex items-center justify-center gap-1.5 border-r border-[#0B172B]/10"
               title={`Export ${activeTab === 'loose' ? 'Loose Tea' : 'Packet'} CSV`}
             >
-              <FileText size={16} className="text-blue-600" /> CSV
+              <FileText size={15} className="text-blue-600" /> CSV
             </button>
             <button 
               onClick={activeTab === 'loose' ? exportLoosePDF : exportPacketPDF}
-              className="px-4 bg-white hover:bg-[#F0F5F9] text-[#0B172B]/80 text-xs font-bold transition-all flex items-center justify-center gap-2"
+              className="px-3 sm:px-4 bg-white hover:bg-[#F0F5F9] text-[#0B172B]/80 text-xs font-bold transition-all flex items-center justify-center gap-1.5"
               title={`Export ${activeTab === 'loose' ? 'Loose Tea' : 'Packet'} PDF`}
             >
-              <File size={16} className="text-red-500" /> PDF
+              <File size={15} className="text-red-500" /> PDF
             </button>
           </div>
 
@@ -572,13 +579,13 @@ export default function InventoryModule({
                     setShowLedgerAdjustment(true);
                   }
                 }}
-                className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 ${
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 ${
                   isCatalogUnlocked 
                     ? 'bg-amber-50 hover:bg-amber-100 text-amber-600 border border-amber-200' 
                     : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
                 }`}
               >
-                <Edit2 size={16} /> Adjust Ledger
+                <Edit2 size={15} /> Adjust Ledger
               </button>
 
               <select 
@@ -602,7 +609,7 @@ export default function InventoryModule({
                   }
                 }}
                 disabled={isPurging || nilCount === 0}
-                className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 ${
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 ${
                   isCatalogUnlocked && nilCount > 0
                     ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 cursor-pointer' 
                     : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-70'
@@ -611,21 +618,21 @@ export default function InventoryModule({
               >
                 {isPurging ? (
                   <>
-                    <Clock size={16} className="animate-spin text-rose-600" />
+                    <Clock size={15} className="animate-spin text-rose-600" />
                     Purging...
                   </>
                 ) : (
                   <>
-                    <Trash2 size={16} /> Purge NIL Stock {nilCount > 0 ? `(${nilCount})` : ''}
+                    <Trash2 size={15} /> Purge NIL Stock {nilCount > 0 ? `(${nilCount})` : ''}
                   </>
                 )}
               </button>
               {systemUser.role !== 'user' && (
                 <button 
                   onClick={() => setShowReceiveLoose(true)}
-                  className="px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all bg-[#0B172B] text-white hover:bg-[#009965] shadow-[0_10px_20px_rgba(11,23,43,0.15)] shrink-0"
+                  className="px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all bg-[#0B172B] text-white hover:bg-[#009965] shadow-xs shrink-0 ml-auto"
                 >
-                  <Plus size={16} /> Receive Raw Loose Tea
+                  <Plus size={15} /> Receive Raw Loose Tea
                 </button>
               )}
             </>
@@ -641,22 +648,22 @@ export default function InventoryModule({
                     setShowAddNewProduct(true);
                   }
                 }}
-                className={`px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+                className={`px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
                   isCatalogUnlocked 
-                    ? 'bg-[#F0F5F9]/50 text-[#0B172B] hover:bg-[#0B172B] hover:text-white border border-[#0B172B]/10 shadow-[0_5px_15px_rgba(11,23,43,0.05)]' 
+                    ? 'bg-[#F0F5F9]/70 text-[#0B172B] hover:bg-[#0B172B] hover:text-white border border-[#0B172B]/10 shadow-xs' 
                     : 'bg-[#F0F5F9]/50 text-[#0B172B]/30 border border-[#0B172B]/10 cursor-not-allowed'
                 }`}
                 title={!isCatalogUnlocked ? "Unlock Catalog to Add Products" : "Register New Product Template"}
               >
-                <Plus size={16} /> New Product Template
+                <Plus size={15} /> New Product Template
               </button>
 
               {systemUser.role !== 'user' && (
                 <button 
                   onClick={() => setShowReceivePacket(true)}
-                  className="px-5 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all bg-[#0B172B] text-white hover:bg-[#009965] shadow-[0_10px_20px_rgba(11,23,43,0.15)] shrink-0"
+                  className="px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all bg-[#0B172B] text-white hover:bg-[#009965] shadow-xs shrink-0 ml-auto"
                 >
-                  <PackagePlus size={16} /> Receive Packaged Stock
+                  <PackagePlus size={15} /> Receive Packaged Stock
                 </button>
               )}
             </>
@@ -947,8 +954,8 @@ export default function InventoryModule({
 
       </div>
 
-      <div className="flex-1 overflow-x-auto">
-        <table className="w-full text-left border-collapse">
+      <div className="flex-1 overflow-x-auto w-full">
+        <table className="w-full min-w-[720px] text-left border-collapse">
           {activeTab === 'loose' ? (
             <>
               <thead className="bg-[#F0F5F9] sticky top-0 z-10">

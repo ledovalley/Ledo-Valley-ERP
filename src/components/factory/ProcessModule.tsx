@@ -348,7 +348,7 @@ export default function ProcessModule({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-[#0B172B]/8 p-6 h-full flex flex-col relative font-sans shadow-[0_10px_30px_rgba(11,23,43,0.04)]">
+    <div className="bg-white rounded-2xl border border-[#0B172B]/8 p-4 sm:p-6 flex flex-col relative font-sans shadow-[0_10px_30px_rgba(11,23,43,0.04)]">
       
       {activeFinalizingBlend && (
         <div className="fixed inset-0 bg-[#0B172B]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">

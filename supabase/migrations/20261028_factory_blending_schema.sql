@@ -51,7 +51,22 @@ CREATE TABLE IF NOT EXISTS public.factory_blend_lots_used (
 
 CREATE INDEX IF NOT EXISTS idx_factory_blend_lots_blend_id ON public.factory_blend_lots_used(blend_id);
 
--- 4. Factory History Ledger (Immutable Audit Trail)
+-- 4. Factory Packet Catalog (Master Packaged Tea Stock for Factory)
+CREATE TABLE IF NOT EXISTS public.factory_packet_catalog (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    unit TEXT NOT NULL DEFAULT 'KG',
+    size NUMERIC NOT NULL DEFAULT 1,
+    stock NUMERIC NOT NULL DEFAULT 0,
+    hsn_code TEXT DEFAULT '',
+    gst_rate NUMERIC DEFAULT 5,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_factory_packet_catalog_name ON public.factory_packet_catalog(name);
+
+-- 5. Factory History Ledger (Immutable Audit Trail)
 CREATE TABLE IF NOT EXISTS public.factory_history (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
@@ -212,10 +227,17 @@ BEGIN
         RAISE EXCEPTION 'Blend % has already been finalized', p_blend_id;
     END IF;
 
-    -- Calculate total packaged output weight
+    -- Calculate total packaged output weight and credit factory_packet_catalog stock
     FOR v_out IN SELECT * FROM jsonb_array_elements(p_outputs)
     LOOP
         v_total_output := v_total_output + COALESCE((v_out->>'totalWeight')::NUMERIC, 0);
+
+        IF v_out->>'productId' IS NOT NULL THEN
+            UPDATE public.factory_packet_catalog
+            SET stock = stock + COALESCE((v_out->>'quantity')::NUMERIC, 0),
+                updated_at = NOW()
+            WHERE id = v_out->>'productId';
+        END IF;
     END LOOP;
 
     -- Credit returned loose tea back if applicable

@@ -346,8 +346,8 @@ export default function BlendModule({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-[#0B172B]/8 p-6 flex flex-col h-full transition-all shadow-[0_10px_30px_rgba(11,23,43,0.04)]">
-      <div className="border-b border-[#0B172B]/8 pb-4 mb-6 flex flex-col sm:flex-row justify-between items-center bg-white px-6 -mx-6 -mt-6 pt-6 rounded-t-2xl gap-4">
+    <div className="bg-white rounded-2xl border border-[#0B172B]/8 p-4 sm:p-6 flex flex-col transition-all shadow-[0_10px_30px_rgba(11,23,43,0.04)]">
+      <div className="border-b border-[#0B172B]/8 pb-4 mb-6 flex flex-col sm:flex-row justify-between items-center bg-white px-4 sm:px-6 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 pt-4 sm:pt-6 rounded-t-2xl gap-4">
         <div>
           <button
             onClick={() => setActiveTab('inventory')}
