@@ -15,8 +15,7 @@ export default async function FactoryLayout({ children }: { children: React.Reac
 
       {/* Signature Dribbble Curved Canvas Frame */}
       <div className="bg-gradient-to-br from-[#FAFBF8] via-[#F6F7F2] to-[#EEF1EB] print:bg-none print:p-0 p-3 sm:p-5 lg:p-6 flex-1 flex flex-col relative w-full max-w-full overflow-hidden print:h-auto">
-        {/* Ambient Brand Atmosphere */}
-        <div className="absolute -top-32 -right-32 w-96 h-96 rounded-full bg-[#0D4728]/5 blur-3xl pointer-events-none print:hidden" />
+        {/* Ambient Brand Atmosphere (Subtle bottom-left only to keep top navbar header pristine) */}
         <div className="absolute -bottom-32 -left-32 w-96 h-96 rounded-full bg-[#E4B84D]/10 blur-3xl pointer-events-none print:hidden" />
 
         {/* Dynamic Page Content */}

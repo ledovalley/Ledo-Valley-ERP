@@ -393,7 +393,7 @@ export default function FactoryDashboardClient({
       )}
 
       {/* Sticky Top Navbar Controlling Factory Navigation */}
-      <div className="sticky top-0 z-30 pt-1 pb-3 -mt-1 bg-gradient-to-b from-[#FAFBF8] via-[#F6F7F2]/95 to-transparent backdrop-blur-xs print:hidden">
+      <div className="sticky top-0 z-30 pt-1 pb-3 -mt-1 bg-[#FAFBF8]/90 backdrop-blur-md print:hidden">
         <TopNavbar
           userRole={userRole}
           userEmail={userEmail}
