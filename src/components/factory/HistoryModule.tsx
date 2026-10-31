@@ -319,15 +319,15 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
           </div>
         </div>
 
-        <div className="flex-1 overflow-auto bg-[#F0F5F9]/20">
-          <table className="w-full text-left border-collapse">
+        <div className="flex-1 overflow-x-auto w-full bg-[#F0F5F9]/20">
+          <table className="w-full min-w-[960px] text-left border-collapse table-fixed">
             <thead className="bg-[#F0F5F9] sticky top-0 z-10">
               <tr>
-                <th className="p-4 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Blend Log Identity</th>
-                <th className="p-4 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Date Interval</th>
-                <th className="p-4 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Used Raw Input Lots</th>
-                <th className="p-4 font-bold text-xs text-[#0B172B] uppercase tracking-wider border-b border-[#0B172B]/8 bg-[#F0F5F9]/50">Produced Packet Products Output</th>
-                <th className="p-4 font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-center">Audit</th>
+                <th className="p-4 w-[24%] font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Blend Log Identity</th>
+                <th className="p-4 w-[11%] font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Date Interval</th>
+                <th className="p-4 w-[35%] font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Used Raw Input Lots</th>
+                <th className="p-4 w-[23%] font-bold text-xs text-[#0B172B] uppercase tracking-wider border-b border-[#0B172B]/8 bg-[#F0F5F9]/50">Produced Packet Products Output</th>
+                <th className="p-4 w-[7%] font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-center">Audit</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#0B172B]/5 text-sm">
