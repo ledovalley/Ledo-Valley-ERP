@@ -65,7 +65,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
         const inputQty = h.details.totalQuantity || 0;
         const outputQty = h.details.totalOutputQuantity || 0;
         const returnedLoose = h.details.returnedLooseWeight || 0;
-        
+
         // As requested by client: Zero out historical variance to start fresh for new stock. 
         // Only track variance for processes completed on or after July 10, 2026.
         const d = h.details.completedDate;
@@ -323,10 +323,10 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
           <table className="w-full min-w-[960px] text-left border-collapse table-fixed">
             <thead className="bg-[#F0F5F9] sticky top-0 z-10">
               <tr>
-                <th className="p-4 w-[24%] font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Blend Log Identity</th>
-                <th className="p-4 w-[11%] font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Date Interval</th>
-                <th className="p-4 w-[35%] font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Used Raw Input Lots</th>
-                <th className="p-4 w-[23%] font-bold text-xs text-[#0B172B] uppercase tracking-wider border-b border-[#0B172B]/8 bg-[#F0F5F9]/50">Produced Packet Products Output</th>
+                <th className="p-4 w-[32%] font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Blend Log Identity</th>
+                <th className="p-4 w-[12%] font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Date Interval</th>
+                <th className="p-4 w-[32%] font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8">Used Raw Input Lots</th>
+                <th className="p-4 w-[17%] font-bold text-xs text-[#0B172B] uppercase tracking-wider border-b border-[#0B172B]/8 bg-[#F0F5F9]/50">Produced Packet Products Output</th>
                 <th className="p-4 w-[7%] font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-center">Audit</th>
               </tr>
             </thead>
@@ -355,15 +355,14 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                           </div>
                         )}
                         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                          <span className={`text-[10px] border px-2 py-0.5 rounded font-bold uppercase ${
-                            record.type === 'Finalized Process'
-                              ? 'bg-[#009965]/10 text-[#009965] border-[#009965]/20'
-                              : record.type === 'BLEND_INITIATED'
+                          <span className={`text-[10px] border px-2 py-0.5 rounded font-bold uppercase ${record.type === 'Finalized Process'
+                            ? 'bg-[#009965]/10 text-[#009965] border-[#009965]/20'
+                            : record.type === 'BLEND_INITIATED'
                               ? 'bg-blue-50 text-blue-700 border-blue-200'
                               : record.type === 'BLEND_UPDATED'
-                              ? 'bg-amber-50 text-amber-700 border-amber-200'
-                              : 'bg-slate-100 text-slate-700 border-slate-200'
-                          }`}>
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-slate-100 text-slate-700 border-slate-200'
+                            }`}>
                             {record.type}
                           </span>
                           {record.userName && (
