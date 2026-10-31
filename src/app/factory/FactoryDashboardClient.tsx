@@ -365,7 +365,7 @@ export default function FactoryDashboardClient({
   ];
 
   return (
-    <div className="flex flex-col min-h-screen">
+    <div className="flex flex-col w-full max-w-full flex-1">
       {/* Toast Notification */}
       {toast && (
         <div
