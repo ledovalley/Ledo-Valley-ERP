@@ -335,17 +335,18 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                 <tr><td colSpan={5} className="p-16 text-center text-[#0B172B]/40">No completed blending cycles stored in history logbook.</td></tr>
               ) : (
                 filteredHistory.map(record => {
-                  const details = record.details;
-                  if (!details) return null;
+                  const details = record.details || {};
+                  const isBlendEvent = ['Finalized Process', 'BLEND_INITIATED', 'BLEND_UPDATED'].includes(record.type);
+                  const isLedgerAdjustment = record.type === 'LEDGER_ADJUSTMENT';
                   const processVariance = details.totalQuantity !== undefined ? details.totalQuantity - (details.totalOutputQuantity || 0) : 0;
 
                   return (
                     <tr key={record.id} className="group hover:bg-[#F0F5F9]/50 transition-all border-b border-[#0B172B]/5">
                       <td className="p-4 align-top">
-                        {record.type === 'LEDGER_ADJUSTMENT' ? (
-                          <div className="font-bold text-[#0B172B]">Manual Adjustment: {details.targetName}</div>
+                        {isLedgerAdjustment ? (
+                          <div className="font-bold text-[#0B172B]">Manual Adjustment: {details.targetName || 'Ledger'}</div>
                         ) : (
-                          <div className="font-bold text-[#0B172B]">{details.blendName || 'Unknown Event'}</div>
+                          <div className="font-bold text-[#0B172B]">{details.blendName || record.desc || 'System Event'}</div>
                         )}
                         <div className="text-xs text-[#0B172B]/40 font-mono mt-0.5">ID: {record.id}</div>
                         {details.batchNo && (
@@ -353,26 +354,42 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                             Batch: {details.batchNo}
                           </div>
                         )}
-                        <div className="mt-2">
-                          <span className="text-[10px] bg-[#009965]/10 text-[#009965] border border-[#009965]/20 px-2 py-0.5 rounded font-bold uppercase">
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          <span className={`text-[10px] border px-2 py-0.5 rounded font-bold uppercase ${
+                            record.type === 'Finalized Process'
+                              ? 'bg-[#009965]/10 text-[#009965] border-[#009965]/20'
+                              : record.type === 'BLEND_INITIATED'
+                              ? 'bg-blue-50 text-blue-700 border-blue-200'
+                              : record.type === 'BLEND_UPDATED'
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : 'bg-slate-100 text-slate-700 border-slate-200'
+                          }`}>
                             {record.type}
                           </span>
+                          {record.userName && (
+                            <span className="text-[10px] text-[#0B172B]/50 font-semibold">
+                              by {record.userName}
+                            </span>
+                          )}
                         </div>
                       </td>
 
                       <td className="p-4 align-top text-xs text-[#0B172B]/70 font-mono leading-relaxed">
-                        {record.type === 'LEDGER_ADJUSTMENT' ? (
+                        {isLedgerAdjustment ? (
                           <div>Adjusted: {record.timestamp?.split('T')[0] || details.date}</div>
                         ) : (
                           <>
                             {details.date && <div>Created: {details.date}</div>}
                             {details.completedDate && <div className="text-[#009965] font-semibold mt-1">Packout: {details.completedDate}</div>}
+                            {!details.date && !details.completedDate && (
+                              <div>{record.timestamp?.split('T')[0]}</div>
+                            )}
                           </>
                         )}
                       </td>
 
                       <td className="p-4 align-top">
-                        {record.type === 'LEDGER_ADJUSTMENT' ? (
+                        {isLedgerAdjustment ? (
                           <div className="space-y-1">
                             <div className="text-xs text-[#0B172B]/70 font-mono">
                               • Variance/Correction: <span className={details.amount > 0 ? "text-[#009965] font-bold" : "text-rose-500 font-bold"}>{details.amount > 0 ? '+' : ''}{(details.amount ?? 0).toFixed(2)} kg</span>
@@ -381,7 +398,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                               Reason: {details.reason}
                             </div>
                           </div>
-                        ) : (
+                        ) : isBlendEvent ? (
                           <>
                             <div className="space-y-1">
                               {details.lotsUsed && details.lotsUsed.map((l: any, i: number) => (
@@ -394,6 +411,9 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                                   )}
                                 </div>
                               ))}
+                              {(!details.lotsUsed || details.lotsUsed.length === 0) && (
+                                <div className="text-xs text-[#0B172B]/50 italic">No lots details recorded.</div>
+                              )}
                             </div>
                             {details.totalQuantity != null && (
                               <div className="text-xs font-bold text-[#0B172B] mt-2 pt-1 border-t border-[#0B172B]/8 font-mono">
@@ -401,6 +421,10 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                               </div>
                             )}
                           </>
+                        ) : (
+                          <div className="text-xs text-[#0B172B]/70 font-medium">
+                            {record.desc || 'No additional input lots'}
+                          </div>
                         )}
                       </td>
 
@@ -426,13 +450,17 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                               </span>
                             </div>
                           </div>
+                        ) : record.type === 'Finalized Process' ? (
+                          <span className="text-xs text-[#0B172B]/40 italic">Packout yield recorded in summary.</span>
                         ) : (
-                          <span className="text-xs text-[#0B172B]/30">N/A</span>
+                          <span className="text-xs text-[#0B172B]/40 italic">
+                            {record.type === 'BLEND_INITIATED' ? 'In-process (Awaiting packout)' : 'N/A'}
+                          </span>
                         )}
                       </td>
 
                       <td className="p-4 align-top text-center border-l border-[#0B172B]/8">
-                        {record.type !== 'LEDGER_ADJUSTMENT' ? (
+                        {details.lotsUsed && details.lotsUsed.length > 0 ? (
                           <button
                             onClick={() => setTraceModalData(record)}
                             className="p-2 bg-white hover:bg-[#F0F5F9] text-[#0B172B]/60 rounded-xl transition-colors inline-flex flex-col items-center gap-1 border border-[#0B172B]/10 shadow-sm"

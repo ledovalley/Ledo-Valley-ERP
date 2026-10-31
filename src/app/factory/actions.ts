@@ -555,7 +555,7 @@ export async function deleteFactoryBlend(blendId: string) {
 }
 
 // 8. Fetch History Ledger & Sequence Gap Analysis (Paginated)
-export async function fetchFactoryHistory(limit: number = 50, offset: number = 0) {
+export async function fetchFactoryHistory(limit: number = 300, offset: number = 0) {
   await enforceFactoryAccess();
   const supabase = await createClient();
 
