@@ -511,8 +511,8 @@ export default function BlendModule({
             </select>
           </div>
         </div>
-        <div className="flex-1 overflow-auto bg-white max-h-[300px]">
-          <table className="w-full text-left border-collapse">
+        <div className="flex-1 overflow-x-auto w-full bg-white">
+          <table className="w-full min-w-[720px] text-left border-collapse">
             <thead className="bg-[#F0F5F9] sticky top-0 z-10">
               <tr>
                 <th className="p-3 w-12 text-center border-b border-[#0B172B]/8">Select</th>
