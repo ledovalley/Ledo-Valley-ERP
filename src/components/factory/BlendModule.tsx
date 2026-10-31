@@ -346,31 +346,17 @@ export default function BlendModule({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-[#0B172B]/8 p-4 sm:p-6 flex flex-col transition-all shadow-[0_10px_30px_rgba(11,23,43,0.04)]">
-      <div className="border-b border-[#0B172B]/8 pb-4 mb-6 flex flex-col sm:flex-row justify-between items-center bg-white px-4 sm:px-6 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 pt-4 sm:pt-6 rounded-t-2xl gap-4">
+    <div className="bg-white rounded-2xl border border-[#0B172B]/8 p-4 sm:p-6 flex flex-col transition-all shadow-[0_10px_30px_rgba(11,23,43,0.04)] font-sans">
+      <div className="border-b border-[#0B172B]/8 pb-4 mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white px-4 sm:px-6 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 pt-4 sm:pt-6 rounded-t-2xl gap-4">
         <div>
-          <button
-            onClick={() => setActiveTab('inventory')}
-            className="text-[#009965] hover:text-[#004825] text-sm font-bold flex items-center gap-1 bg-[#009965]/10 hover:bg-[#009965]/20 px-3 py-1.5 rounded-xl transition-colors mb-2"
-          >
-            <ArrowLeft size={14} /> Back to Inventory
-          </button>
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-black text-[#0B172B] tracking-tight">Create New Blend</h2>
-            {/* <button 
-            onClick={handleResetSerials}
-            className="px-3 py-1 bg-red-100 text-red-600 text-xs font-bold rounded shadow-sm border border-red-200"
-          >
-            Reset Serial to SL-01
-          </button> */}
-          </div>
-          <p className="text-xs text-[#0B172B]/55">Select available loose warehouse lots & assign bags for the blend sheet.</p>
+          <h2 className="text-xl font-bold text-[#0B172B]">Create New Blend</h2>
+          <p className="text-xs text-[#0B172B]/55 mt-1">Select available loose warehouse lots & assign bags for the blend sheet.</p>
         </div>
         {systemUser.role !== 'user' && (
           <div className="flex gap-3">
             <button
               onClick={handleSubmitBlend}
-              className="bg-[#0B172B] hover:bg-[#1a2b4b] text-white px-4 py-3 rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg text-sm shadow-[#0B172B]/10 transition-all duration-200"
+              className="bg-[#0B172B] hover:bg-[#1a2b4b] text-white px-4 py-2.5 rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg text-sm shadow-[#0B172B]/10 transition-all duration-200"
             >
               <Printer size={18} />
               {editedBlendId ? 'Update & Print Blend Sheet' : 'Submit & Print Blend Sheet'}
@@ -463,14 +449,14 @@ export default function BlendModule({
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         <div>
           <label className="block text-xs font-bold text-[#0B172B]/70 uppercase mb-1">Blend Target Name *</label>
-          <input type="text" placeholder="e.g. Ledo Premium Classic" value={blendName} onChange={(e) => setBlendName(e.target.value)} className="w-full px-4 py-3 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus:bg-white focus:ring-2 focus:ring-[#009965]/20 focus:border-[#009965] outline-none transition-all duration-200 text-sm font-medium text-[#0B172B] placeholder-[#0B172B]/40" />
+          <input type="text" placeholder="e.g. Ledo Premium Classic" value={blendName} onChange={(e) => setBlendName(e.target.value)} className="w-full px-4 py-2.5 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 focus:bg-white focus:ring-2 focus:ring-[#009965]/20 focus:border-[#009965] outline-none transition-all duration-200 text-sm font-medium text-[#0B172B] placeholder-[#0B172B]/40" />
         </div>
         <div>
           <label className="block text-xs font-bold text-[#0B172B]/70 uppercase mb-1">Batch Code (Fixed)</label>
-          <div className="flex items-center w-full px-4 py-3 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 transition-all duration-200">
+          <div className="flex items-center w-full px-4 py-2.5 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 transition-all duration-200">
             <input type="text" value={batchNo} readOnly className="bg-transparent outline-none text-sm font-bold text-[#0B172B] flex-1 w-full" />
           </div>
         </div>

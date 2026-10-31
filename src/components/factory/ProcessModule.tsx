@@ -105,15 +105,74 @@ export default function ProcessModule({
   ]);
   const [returnedLooseWeight, setReturnedLooseWeight] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterMark, setFilterMark] = useState('');
+  const [filterDate, setFilterDate] = useState('');
+  const [sortBy, setSortBy] = useState('date_desc');
+
+  // Extract unique constituent marks present across in-process blends
+  const uniqueMarks = useMemo(() => {
+    const marks = new Set<string>();
+    underProcess.forEach(b => {
+      (b.lotsUsed || []).forEach(l => {
+        if (l.mark) marks.add(l.mark);
+      });
+    });
+    return Array.from(marks).sort();
+  }, [underProcess]);
 
   const filteredUnderProcess = useMemo(() => {
-    if (!searchQuery.trim()) return underProcess;
-    const q = searchQuery.toLowerCase();
-    return underProcess.filter(b => 
-      b.blendName.toLowerCase().includes(q) || 
-      b.batchNo.toLowerCase().includes(q)
-    );
-  }, [underProcess, searchQuery]);
+    let result = underProcess.filter(b => {
+      // 1. Search Query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchesQuery =
+          b.blendName.toLowerCase().includes(q) ||
+          (b.batchNo && b.batchNo.toLowerCase().includes(q)) ||
+          b.id.toLowerCase().includes(q) ||
+          (b.lotsUsed || []).some(l =>
+            l.lotNumber.toLowerCase().includes(q) ||
+            l.mark.toLowerCase().includes(q) ||
+            (l.grade && l.grade.toLowerCase().includes(q))
+          );
+        if (!matchesQuery) return false;
+      }
+
+      // 2. Filter by Constituent Tea Mark
+      if (filterMark) {
+        const hasMark = (b.lotsUsed || []).some(l => l.mark === filterMark);
+        if (!hasMark) return false;
+      }
+
+      // 3. Filter by Initiation Date
+      if (filterDate && b.date !== filterDate) {
+        return false;
+      }
+
+      return true;
+    });
+
+    // 4. Sort
+    result.sort((a, b) => {
+      if (sortBy === 'date_desc') {
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+      }
+      if (sortBy === 'date_asc') {
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
+      }
+      if (sortBy === 'weight_desc') {
+        return b.totalQuantity - a.totalQuantity;
+      }
+      if (sortBy === 'weight_asc') {
+        return a.totalQuantity - b.totalQuantity;
+      }
+      if (sortBy === 'name_asc') {
+        return a.blendName.localeCompare(b.blendName);
+      }
+      return 0;
+    });
+
+    return result;
+  }, [underProcess, searchQuery, filterMark, filterDate, sortBy]);
 
   const toggleMergeSelect = (id: string) => {
     if (selectedForMerge.includes(id)) {
@@ -473,21 +532,11 @@ export default function ProcessModule({
         </div>
       )}
 
-      <div className="border-b border-[#0B172B]/8 pb-4 mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white px-6 -mx-6 -mt-6 pt-6 rounded-t-2xl">
-        <div>
-          <h2 className="text-xl font-bold text-[#0B172B]">In-Process Blends</h2>
-          <p className="text-sm text-[#0B172B]/55">Manage and track blends currently being processed</p>
-        </div>
-        <div className="flex gap-2 w-full sm:w-auto">
-          <div className="relative w-full sm:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#0B172B]/40" size={16} />
-            <input 
-              type="text" 
-              placeholder="Search by name or batch..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-white border border-[#0B172B]/10 rounded-xl focus:border-[#009965] outline-none text-sm shadow-sm transition-all"
-            />
+      <div className="border-b border-[#0B172B]/8 pb-4 mb-6 flex flex-col gap-4 bg-white px-6 -mx-6 -mt-6 pt-6 rounded-t-2xl">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-[#0B172B]">In-Process Blends</h2>
+            <p className="text-sm text-[#0B172B]/55">Manage and track blends currently being processed</p>
           </div>
           {systemUser.role !== 'user' && selectedForMerge.length > 1 && (
             <button 
@@ -495,6 +544,69 @@ export default function ProcessModule({
               className="px-4 py-2 bg-[#0B172B] text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#009965] transition-all shadow-sm shrink-0"
             >
               <Combine size={16} /> Merge ({selectedForMerge.length})
+            </button>
+          )}
+        </div>
+
+        {/* Filter Toolbar */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="relative flex-1 min-w-[220px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#0B172B]/40" size={15} />
+            <input 
+              type="text" 
+              placeholder="Search blend name, batch, lot or mark..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-4 py-2.5 bg-[#F0F5F9]/50 border border-[#0B172B]/8 rounded-xl focus:border-[#009965] focus:bg-white outline-none text-xs sm:text-sm shadow-xs transition-all text-[#0B172B]"
+            />
+          </div>
+
+          {/* Mark Filter */}
+          <select
+            value={filterMark}
+            onChange={(e) => setFilterMark(e.target.value)}
+            className="py-2.5 px-3 text-xs border border-[#0B172B]/10 rounded-xl bg-white outline-none text-[#0B172B]/80 font-medium focus:ring-1 focus:ring-[#009965] shrink-0"
+          >
+            <option value="">All Tea Marks</option>
+            {uniqueMarks.map(m => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+
+          {/* Date Filter */}
+          <input
+            type="date"
+            value={filterDate}
+            onChange={(e) => setFilterDate(e.target.value)}
+            title="Filter by initiation date"
+            className="py-2 px-3 text-xs border border-[#0B172B]/10 rounded-xl bg-white outline-none text-[#0B172B]/80 font-medium focus:ring-1 focus:ring-[#009965] shrink-0"
+          />
+
+          {/* Sort By */}
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="py-2.5 px-3 text-xs border border-[#0B172B]/10 rounded-xl bg-white outline-none text-[#0B172B]/80 font-medium focus:ring-1 focus:ring-[#009965] shrink-0"
+          >
+            <option value="date_desc">Newest First</option>
+            <option value="date_asc">Oldest First</option>
+            <option value="weight_desc">Highest Weight</option>
+            <option value="weight_asc">Lowest Weight</option>
+            <option value="name_asc">Blend Name (A-Z)</option>
+          </select>
+
+          {/* Clear Filters Button if any active */}
+          {(searchQuery || filterMark || filterDate || sortBy !== 'date_desc') && (
+            <button
+              onClick={() => {
+                setSearchQuery('');
+                setFilterMark('');
+                setFilterDate('');
+                setSortBy('date_desc');
+              }}
+              className="py-2 px-3 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100/70 border border-rose-200/60 rounded-xl transition-all"
+            >
+              Reset
             </button>
           )}
         </div>

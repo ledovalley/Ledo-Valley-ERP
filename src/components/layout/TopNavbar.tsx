@@ -56,7 +56,7 @@ export default function TopNavbar({
   const navItems = isPortal
     ? []
     : isFactory
-    ? [
+      ? [
         { label: 'Inventory & Receiving', id: 'inventory', icon: Award, badge: factoryBadges?.inventory },
         { label: 'Blend Management', id: 'blend', icon: TrendingUp },
         { label: 'Under Process', id: 'process', icon: LayoutDashboard, badge: factoryBadges?.process },
@@ -65,7 +65,7 @@ export default function TopNavbar({
           ? [{ label: 'Gap Analysis', id: 'missing_blends', icon: Award, badge: factoryBadges?.missing }]
           : []),
       ]
-    : [
+      : [
         { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
         { label: 'Sales & Retailers', href: '/dashboard/sales', icon: TrendingUp },
         { label: 'Audit & Ledger', href: '/dashboard/ledger', icon: Award },
@@ -153,9 +153,8 @@ export default function TopNavbar({
                       <span>{item.label}</span>
                       {typeof item.badge === 'number' && item.badge > 0 && (
                         <span
-                          className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
-                            active ? 'bg-[#FFF9CD] text-[#0D4728]' : 'bg-slate-200 text-slate-700'
-                          }`}
+                          className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${active ? 'bg-[#FFF9CD] text-[#0D4728]' : 'bg-slate-200 text-slate-700'
+                            }`}
                         >
                           {item.badge}
                         </span>
@@ -313,9 +312,8 @@ export default function TopNavbar({
                   </div>
                   {typeof item.badge === 'number' && item.badge > 0 && (
                     <span
-                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
-                        active ? 'bg-[#FFF9CD] text-[#0D4728]' : 'bg-slate-200 text-slate-700'
-                      }`}
+                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${active ? 'bg-[#FFF9CD] text-[#0D4728]' : 'bg-slate-200 text-slate-700'
+                        }`}
                     >
                       {item.badge}
                     </span>
