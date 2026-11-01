@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, Trash2, Loader2, X } from 'lucide-react';
 
 interface PasswordConfirmModalProps {
@@ -20,10 +21,15 @@ interface PasswordConfirmModalProps {
 export default function PasswordConfirmModal({
   isOpen, title, message, confirmText = 'Delete', onConfirm, onClose
 }: PasswordConfirmModalProps) {
+  const [mounted, setMounted] = useState(false);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -34,7 +40,7 @@ export default function PasswordConfirmModal({
     }
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !mounted) return null;
 
   const submit = async () => {
     if (working) return;
@@ -60,9 +66,9 @@ export default function PasswordConfirmModal({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md" onClick={() => !working && onClose()}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-rose-100" onClick={e => e.stopPropagation()}>
+  const modalContent = (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md" onClick={() => !working && onClose()}>
+      <div className="relative z-10 bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-rose-100" onClick={e => e.stopPropagation()}>
         <div className="p-6">
           <div className="flex items-start justify-between mb-4">
             <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center ring-4 ring-rose-50">
@@ -107,4 +113,6 @@ export default function PasswordConfirmModal({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : null;
 }
