@@ -11,7 +11,7 @@ export default async function SettingsPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
-  const role = user?.user_metadata?.role || "employee";
+  const role = user?.app_metadata?.role || "employee";
   if (!['admin', 'manager'].includes(role)) {
     redirect('/unauthorized');
   }

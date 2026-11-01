@@ -3,6 +3,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { supabaseAdmin } from '@/utils/supabase/admin'
 import { revalidatePath } from 'next/cache'
+import { checkDeletePassword } from '@/utils/deletePassword'
 
 export async function fetchAllProducts() {
   const supabase = await createClient()
@@ -22,7 +23,7 @@ export async function createProduct(formData: FormData) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const role = user?.user_metadata?.role
+  const role = user?.app_metadata?.role
   if (role !== 'admin') {
     return { error: "Unauthorized. Only administrators can create products." }
   }
@@ -64,7 +65,7 @@ export async function updateProduct(id: string, formData: FormData) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const role = user?.user_metadata?.role
+  const role = user?.app_metadata?.role
   if (role !== 'admin') {
     return { error: "Unauthorized. Only administrators can update products." }
   }
@@ -106,7 +107,7 @@ export async function toggleProductStatus(id: string, currentStatus: boolean) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const role = user?.user_metadata?.role
+  const role = user?.app_metadata?.role
   if (role !== 'admin') {
     return { error: "Unauthorized. Only administrators can modify products." }
   }
@@ -123,14 +124,17 @@ export async function toggleProductStatus(id: string, currentStatus: boolean) {
   return { success: true }
 }
 
-export async function deleteProduct(id: string) {
+export async function deleteProduct(id: string, deletePassword: string) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const role = user?.user_metadata?.role
+  const role = user?.app_metadata?.role
   if (role !== 'admin') {
     return { error: "Unauthorized. Only administrators can delete products." }
   }
+
+  const pwError = checkDeletePassword(deletePassword)
+  if (pwError) return { error: pwError }
 
   const { error } = await supabase
     .from('products')
@@ -171,14 +175,14 @@ export interface EmployeeTarget {
 export async function fetchEligibleEmployees(): Promise<EligibleEmployee[]> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const role = user?.user_metadata?.role
+  const role = user?.app_metadata?.role
 
   if (!user || !['admin', 'manager'].includes(role)) {
     return []
   }
 
   try {
-    const { data, error } = await supabaseAdmin.auth.admin.listUsers()
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
     if (error || !data?.users) {
       console.error("Fetch eligible employees error:", error?.message)
       return []
@@ -187,14 +191,14 @@ export async function fetchEligibleEmployees(): Promise<EligibleEmployee[]> {
     // Only employees below manager level (exclude admin and manager)
     const eligible = data.users
       .filter((u: any) => {
-        const uRole = u.user_metadata?.role?.toLowerCase() || 'employee'
+        const uRole = u.app_metadata?.role?.toLowerCase() || 'employee'
         return uRole !== 'admin' && uRole !== 'manager'
       })
       .map((u: any) => ({
         id: u.id,
         email: u.email || '',
         name: u.user_metadata?.name || u.email?.split('@')[0] || 'Employee',
-        role: u.user_metadata?.role || 'employee',
+        role: u.app_metadata?.role || 'employee',
         district: u.user_metadata?.district || 'Not Assigned'
       }))
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -234,7 +238,7 @@ export async function saveSingleTarget(
 ) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const role = user?.user_metadata?.role
+  const role = user?.app_metadata?.role
 
   if (!user || !['admin', 'manager'].includes(role)) {
     return { error: "Unauthorized. Only administrators and managers can set targets." }
@@ -276,7 +280,7 @@ export async function saveBulkTargets(
 ) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const role = user?.user_metadata?.role
+  const role = user?.app_metadata?.role
 
   if (!user || !['admin', 'manager'].includes(role)) {
     return { error: "Unauthorized. Only administrators and managers can set targets." }

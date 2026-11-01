@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useMemo } from 'react';
 import { createUser, updateUser, deleteUser } from './actions';
+import PasswordConfirmModal from '@/components/ui/PasswordConfirmModal';
 import {
   Plus,
   Edit2,
@@ -81,9 +82,9 @@ export default function UsersClient({
   // Stats calculation
   const stats = useMemo(() => {
     const total = users.length;
-    const admins = users.filter(u => u.user_metadata?.role === 'admin').length;
-    const managers = users.filter(u => u.user_metadata?.role === 'manager').length;
-    const sales = users.filter(u => u.user_metadata?.role === 'sales').length;
+    const admins = users.filter(u => u.app_metadata?.role === 'admin').length;
+    const managers = users.filter(u => u.app_metadata?.role === 'manager').length;
+    const sales = users.filter(u => u.app_metadata?.role === 'sales').length;
     return { total, admins, managers, sales };
   }, [users]);
 
@@ -92,7 +93,7 @@ export default function UsersClient({
     return users.filter(u => {
       const uName = (u.user_metadata?.name || '').toLowerCase();
       const uEmail = (u.email || '').toLowerCase();
-      const uRole = (u.user_metadata?.role || 'staff').toLowerCase();
+      const uRole = (u.app_metadata?.role || 'staff').toLowerCase();
       const uDistrict = (u.user_metadata?.district || '').toLowerCase();
       const matchesSearch = uName.includes(searchTerm.toLowerCase()) || uEmail.includes(searchTerm.toLowerCase()) || uDistrict.includes(searchTerm.toLowerCase());
       const matchesRole = selectedRoleFilter === 'all' || uRole === selectedRoleFilter;
@@ -138,14 +139,14 @@ export default function UsersClient({
     setName(user.user_metadata?.name || '');
     setEmail(user.email);
     setPassword('');
-    setRole(user.user_metadata?.role || 'sales');
+    setRole(user.app_metadata?.role || 'sales');
     setDistrict(user.user_metadata?.district || 'Tinsukia');
     setDistrictSearch('');
-    setEmploymentType(user.user_metadata?.employment_type || 'monthly_salary');
-    setBaseRate(user.user_metadata?.base_rate !== undefined && user.user_metadata?.base_rate !== null ? String(user.user_metadata.base_rate) : '');
+    setEmploymentType(user.app_metadata?.employment_type || 'monthly_salary');
+    setBaseRate(user.app_metadata?.base_rate !== undefined && user.app_metadata?.base_rate !== null ? String(user.app_metadata.base_rate) : '');
 
     // Normalize allowances from metadata
-    const raw = user.user_metadata?.allowances;
+    const raw = user.app_metadata?.allowances;
     if (Array.isArray(raw)) {
       setSelectedAllowances(raw.map((item: any) => {
         if (typeof item === 'object' && item !== null) {
@@ -218,12 +219,16 @@ export default function UsersClient({
     });
   };
 
+  // Deleting asks for the delete password (checked on the server)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const handleDelete = (id: string) => {
-    if (confirm("Are you sure you want to permanently delete this user?")) {
-      startTransition(async () => {
-        await deleteUser(id);
-      });
-    }
+    setPendingDeleteId(id);
+  };
+  const confirmDeleteUser = async (password: string): Promise<string | null> => {
+    if (!pendingDeleteId) return null;
+    const res = await deleteUser(pendingDeleteId, password);
+    if (res && 'error' in res && res.error) return res.error;
+    return null;
   };
 
   const getRoleBadge = (userRole: string) => {
@@ -241,6 +246,14 @@ export default function UsersClient({
 
   return (
     <div className="space-y-7">
+      <PasswordConfirmModal
+        isOpen={!!pendingDeleteId}
+        title="Delete user?"
+        message={`Permanently delete ${users.find(u => u.id === pendingDeleteId)?.email || 'this user'}? They will no longer be able to log in.`}
+        confirmText="Delete user"
+        onConfirm={confirmDeleteUser}
+        onClose={() => setPendingDeleteId(null)}
+      />
 
       {/* 1. HERO HEADER & SUMMARY METRICS (Consistent with Dashboard) */}
       <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-6 pb-2">
@@ -377,12 +390,12 @@ export default function UsersClient({
               ) : (
                 filteredUsers.map(u => {
                   const uName = u.user_metadata?.name || 'No Name Set';
-                  const uRole = u.user_metadata?.role || 'staff';
+                  const uRole = u.app_metadata?.role || 'staff';
                   const initialLetter = uName !== 'No Name Set' ? uName.charAt(0).toUpperCase() : u.email.charAt(0).toUpperCase();
 
-                  const uEmpType = u.user_metadata?.employment_type || 'monthly_salary';
-                  const uBaseRate = u.user_metadata?.base_rate;
-                  const rawAllowances = u.user_metadata?.allowances;
+                  const uEmpType = u.app_metadata?.employment_type || 'monthly_salary';
+                  const uBaseRate = u.app_metadata?.base_rate;
+                  const rawAllowances = u.app_metadata?.allowances;
                   const uAllowances: Array<{ id: string; rate?: number }> = Array.isArray(rawAllowances)
                     ? rawAllowances.map((item: any) => typeof item === 'object' && item !== null ? item : { id: String(item), rate: 0 })
                     : [];

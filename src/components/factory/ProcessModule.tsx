@@ -1,37 +1,30 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Boxes, ArrowRight, TrendingDown, Trash2, Search,
-  Plus, Combine, Settings2, Check, Printer, Edit2, Copy
+  Plus, Combine, Settings2, Check, Printer, Edit2, Copy, Loader2
 } from 'lucide-react';
-import { BlendProcess, CatalogProduct, LooseLot, HistoryRecord } from '@/types/factory';
+import { BlendProcess, CatalogProduct, LooseLot } from '@/types/factory';
+import type { FinalizeInput } from '@/app/factory/FactoryDashboardClient';
 
 interface ProcessModuleProps {
   underProcess: BlendProcess[];
-  setUnderProcess: React.Dispatch<React.SetStateAction<BlendProcess[]>>;
   packetCatalog: CatalogProduct[];
-  setPacketCatalog: React.Dispatch<React.SetStateAction<CatalogProduct[]>>;
   looseInventory: LooseLot[];
-  setLooseInventory: React.Dispatch<React.SetStateAction<LooseLot[]>>;
-  historyList: HistoryRecord[];
-  setHistoryList: React.Dispatch<React.SetStateAction<HistoryRecord[]>>;
+  /** true while any save is in progress */
+  isBusy: boolean;
+  /** admins and managers may delete blends */
+  canDelete: boolean;
+  /** Each of these saves to the database; they resolve to true only if it saved. */
+  onFinalizeBlend: (input: FinalizeInput) => Promise<boolean>;
+  onDeleteBlend: (blend: BlendProcess) => void;
+  onDuplicateBlend: (blend: BlendProcess) => Promise<boolean>;
+  /** Asks for confirmation, then merges the blends on the server */
+  onMergeBlends: (blends: BlendProcess[]) => void;
   setPrintBlend: (blend: BlendProcess | null) => void;
   onRevertAndEdit: (blend: BlendProcess) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
   systemUser: any;
-  logSystemAction: (action: string, details: string, isError?: boolean) => void;
-  onFinalizeBlend?: (data: {
-    blendId: string;
-    returnedLoose: number;
-    returnLotId: string;
-    outputs: {
-      productId: string;
-      productName: string;
-      quantity: number;
-      unit: string;
-      totalWeight: number;
-    }[];
-  }) => Promise<{ success: boolean; error?: string }>;
-  onDeleteBlend?: (blendId: string) => Promise<{ success: boolean; error?: string }>;
+  logSystemAction?: (action: string, details: string, isError?: boolean) => void;
 }
 
 function SearchableProductSelect({ value, onChange, catalog }: { value: string, onChange: (val: string) => void, catalog: CatalogProduct[] }) {
@@ -98,20 +91,18 @@ function SearchableProductSelect({ value, onChange, catalog }: { value: string, 
 
 export default function ProcessModule({ 
   underProcess, 
-  setUnderProcess, 
   packetCatalog, 
-  setPacketCatalog, 
   looseInventory, 
-  setLooseInventory, 
-  historyList, 
-  setHistoryList, 
+  isBusy,
+  canDelete,
+  onFinalizeBlend,
+  onDeleteBlend,
+  onDuplicateBlend,
+  onMergeBlends,
   setPrintBlend,
   onRevertAndEdit,
   triggerToast,
-  systemUser,
-  logSystemAction,
-  onFinalizeBlend,
-  onDeleteBlend
+  systemUser
 }: ProcessModuleProps) {
   const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
   const [activeFinalizingBlend, setActiveFinalizingBlend] = useState<BlendProcess | null>(null);
@@ -189,36 +180,25 @@ export default function ProcessModule({
     return result;
   }, [underProcess, searchQuery, filterMark, filterDate, sortBy]);
 
+  // Drop selections for blends that no longer exist (merged, finalized, deleted)
+  useEffect(() => {
+    setSelectedForMerge(prev => {
+      const next = prev.filter(id => underProcess.some(b => b.id === id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [underProcess]);
+
   const toggleMergeSelect = (id: string) => {
-    if (selectedForMerge.includes(id)) {
-      setSelectedForMerge(selectedForMerge.filter(i => i !== id));
-    } else {
-      setSelectedForMerge([...selectedForMerge, id]);
-    }
+    setSelectedForMerge(prev => (prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]));
   };
 
   const handleMerge = () => {
+    if (isBusy) return;
     if (selectedForMerge.length < 2) return triggerToast("Select at least 2 blends to merge together", "error");
-    
     const blendsToMerge = underProcess.filter(b => selectedForMerge.includes(b.id));
-    
-    const newMergedBlend: BlendProcess = {
-      id: 'MRG-' + Date.now().toString().slice(-6),
-      blendName: `Merged: ${blendsToMerge.map(b => b.blendName).join(' + ')}`,
-      batchNo: blendsToMerge.map(b => b.batchNo).filter(b => b).join(', '),
-      totalQuantity: blendsToMerge.reduce((sum, b) => sum + b.totalQuantity, 0),
-      status: 'PENDING',
-      date: new Date().toISOString().split('T')[0],
-      lotsUsed: blendsToMerge.flatMap(b => b.lotsUsed) 
-    };
-
-    setUnderProcess(prev => {
-      const remaining = prev.filter(b => !selectedForMerge.includes(b.id));
-      return [...remaining, newMergedBlend];
-    });
-    setSelectedForMerge([]);
-    logSystemAction('MERGE_BLENDS', `Merged ${blendsToMerge.length} blends into ${newMergedBlend.blendName} (${newMergedBlend.totalQuantity}kg)`);
-    triggerToast("In-process streams consolidated successfully!");
+    if (blendsToMerge.length < 2) return triggerToast("Some selected blends no longer exist. Refresh and try again.", "error");
+    // Saved on the server after confirmation; the list reloads from the database
+    onMergeBlends(blendsToMerge);
   };
 
   const initFinalizeFlow = (blend: BlendProcess) => {
@@ -263,191 +243,90 @@ export default function ProcessModule({
   }, [calculatedOutputs, returnedLooseWeight]);
 
   const submitFinalization = async () => {
-    if (!activeFinalizingBlend) return;
-    
-    for (let i = 0; i < producedLines.length; i++) {
-      if (!producedLines[i].productId) {
+    if (!activeFinalizingBlend || isBusy) return;
+
+    const returnedLoose = parseFloat(returnedLooseWeight) || 0;
+    if (returnedLoose < 0) {
+      return triggerToast("Returned loose weight cannot be negative.", "error");
+    }
+
+    // Allow finishing with only returned loose tea (no packets), but not with nothing at all
+    const lines = producedLines.filter(l => l.productId || l.quantity);
+    for (let i = 0; i < lines.length; i++) {
+      if (!lines[i].productId) {
         return triggerToast(`Line ${i + 1}: Please select a catalog product.`, "error");
       }
-      if (parseFloat(producedLines[i].quantity) <= 0 || isNaN(parseFloat(producedLines[i].quantity))) {
+      const q = parseFloat(lines[i].quantity);
+      if (isNaN(q) || q <= 0) {
         return triggerToast(`Line ${i + 1}: Quantity must be greater than 0.`, "error");
       }
     }
+    if (lines.length === 0 && returnedLoose <= 0) {
+      return triggerToast("Add at least one packed product or returned loose weight.", "error");
+    }
 
-    if (!window.confirm(`Are you sure you want to declare this blend complete? This will finalize the output and update your packet stock inventory.`)) {
+    if (!window.confirm(`Declare "${activeFinalizingBlend.blendName}" complete? This adds the packed output to packet stock and cannot be undone from this screen.`)) {
       return;
     }
 
-    const returnedLoose = parseFloat(returnedLooseWeight) || 0;
-    const outputs = calculatedOutputs.filter(o => o.productId).map(o => ({
-      productId: o.productId,
-      productName: o.name,
-      quantity: parseFloat(o.quantity),
-      unit: o.unit,
-      totalWeight: o.totalWeight
-    }));
+    const saved = await onFinalizeBlend({
+      blendId: activeFinalizingBlend.id,
+      returnedLoose,
+      outputs: lines.map(l => ({ productId: l.productId, quantity: parseFloat(l.quantity) }))
+    });
 
-    if (onFinalizeBlend) {
-      const res = await onFinalizeBlend({
-        blendId: activeFinalizingBlend.id,
-        returnedLoose,
-        returnLotId: 'l-balance',
-        outputs
-      });
-
-      if (!res.success) {
-        return; // Toast error handled in parent
-      }
-
+    // Close the dialog only if it saved; on failure keep what the user entered
+    if (saved) {
       setActiveFinalizingBlend(null);
-      setSelectedForMerge(prev => prev.filter(id => id !== activeFinalizingBlend.id));
-      logSystemAction('FINALIZE_BLEND', `Finalized ${activeFinalizingBlend.blendName}. Output: ${totalOutputWeight.toFixed(2)}kg`);
-    } else {
-      setPacketCatalog(prev => {
-        return prev.map(catalogItem => {
-          const matches = calculatedOutputs.filter(o => o.productId === catalogItem.id);
-          if (matches.length > 0) {
-            const addedQty = matches.reduce((sum, current) => sum + parseFloat(current.quantity), 0);
-            return {
-              ...catalogItem,
-              stock: catalogItem.stock + addedQty
-            };
-          }
-          return catalogItem;
-        });
-      });
-
-      if (returnedLoose > 0) {
-        setLooseInventory(prev => prev.map(lot => {
-          if (lot.id === 'l-balance') {
-            return { ...lot, weight: lot.weight + returnedLoose };
-          }
-          return lot;
-        }));
-      }
-
-      const finalizedHistory: HistoryRecord = {
-        id: 'HST-' + Date.now().toString(),
-        type: 'Finalized Process',
-        desc: `Finalized blend "${activeFinalizingBlend.blendName}" with yield of ${totalOutputWeight.toFixed(2)} kg.`,
-        timestamp: new Date().toISOString(),
-        details: {
-          ...activeFinalizingBlend,
-          status: 'Completed',
-          completedDate: new Date().toISOString().split('T')[0],
-          totalOutputQuantity: totalOutputWeight,
-          returnedLooseWeight: returnedLoose,
-          producedItems: outputs
-        }
-      };
-
-      setHistoryList(prev => [finalizedHistory, ...prev]);
-      setUnderProcess(prev => prev.filter(b => b.id !== activeFinalizingBlend.id));
-      setActiveFinalizingBlend(null);
-      setSelectedForMerge(prev => prev.filter(id => id !== activeFinalizingBlend.id));
-      
-      logSystemAction('FINALIZE_BLEND', `Finalized ${activeFinalizingBlend.blendName}. Output: ${totalOutputWeight.toFixed(2)}kg`);
-      triggerToast(`"${activeFinalizingBlend.blendName}" complete. Stock updated safely!`);
     }
   };
 
-  const handleDeleteBlend = async (blend: BlendProcess) => {
-    if (systemUser.role !== 'super_admin' && systemUser.role !== 'manager') {
-      return triggerToast("Permission Denied: Only managers and admins can delete processing blends.", "error");
+  const handleDeleteBlend = (blend: BlendProcess) => {
+    if (!canDelete) {
+      return triggerToast("Permission Denied: Only admins and managers can delete blends.", "error");
     }
-
-    if (!window.confirm(`Are you sure you want to delete "${blend.blendName}"? This will return the utilized stock back to the loose ledger.`)) {
-      return;
-    }
-
-    if (onDeleteBlend) {
-      const res = await onDeleteBlend(blend.id);
-      if (!res.success) {
-        return; // Toast error handled in parent
-      }
-      setSelectedForMerge(prev => prev.filter(id => id !== blend.id));
-      logSystemAction('DELETE_BLEND', `Deleted blend: ${blend.blendName} and reverted stock`, true);
-    } else {
-      setLooseInventory((prev: LooseLot[]) => prev.map(lot => {
-        const usedLot = blend.lotsUsed.find(l => l.lotNumber === lot.lotNumber && l.mark === lot.mark);
-        if (usedLot) {
-          if (lot.id.startsWith('l-')) {
-            return { ...lot, weight: lot.weight + usedLot.weightUsed };
-          } else {
-            const bagsRefund = usedLot.bagsUsed === '-' ? 0 : Number(usedLot.bagsUsed);
-            const weightRefund = usedLot.weightUsed;
-            return { ...lot, bags: lot.bags + bagsRefund, weight: lot.weight + weightRefund };
-          }
-        }
-        return lot;
-      }));
-
-      setUnderProcess((prev: BlendProcess[]) => prev.filter(b => b.id !== blend.id));
-      setSelectedForMerge(prev => prev.filter(id => id !== blend.id));
-      logSystemAction('DELETE_BLEND', `Deleted blend: ${blend.blendName} and reverted stock`, true);
-      triggerToast(`Blend "${blend.blendName}" deleted and stock reverted successfully.`);
-    }
+    // The parent asks for confirmation, then deletes and returns stock on the server
+    onDeleteBlend(blend);
   };
 
-  const handleDuplicateBlend = (blend: BlendProcess) => {
-    let shortfalls: string[] = [];
-    
+  const handleDuplicateBlend = async (blend: BlendProcess) => {
+    if (isBusy) return;
+    const shortfalls: string[] = [];
+
+    // Add up repeated lots first (a merged blend can use the same lot more than once)
+    const needed = new Map<string, { mark: string; lotNumber: string; lotId: string | null | undefined; weight: number; bags: number }>();
     for (const used of blend.lotsUsed) {
-      const lot = looseInventory.find(l => l.lotNumber === used.lotNumber && l.mark === used.mark);
+      const key = used.lotId || `${used.mark}|${used.lotNumber}`;
+      const prev = needed.get(key) ?? { mark: used.mark, lotNumber: used.lotNumber, lotId: used.lotId, weight: 0, bags: 0 };
+      prev.weight += Number(used.weightUsed) || 0;
+      prev.bags += used.bagsUsed === '-' ? 0 : Number(used.bagsUsed) || 0;
+      needed.set(key, prev);
+    }
+
+    for (const used of needed.values()) {
+      const lot = used.lotId ? looseInventory.find(l => l.id === used.lotId) : undefined;
       if (!lot) {
-        shortfalls.push(`- ${used.lotNumber} (${used.mark}): Lot is completely missing from inventory.`);
+        shortfalls.push(`- ${used.mark} (${used.lotNumber}): lot no longer exists in inventory.`);
         continue;
       }
-      
-      if (lot.id.startsWith('l-')) {
-        if (lot.weight < used.weightUsed) {
-          const shortage = used.weightUsed - lot.weight;
-          shortfalls.push(`- ${used.lotNumber} (${used.mark}): Short by ${shortage.toFixed(2)} kg`);
-        }
-      } else {
-        const reqBags = used.bagsUsed === '-' ? 0 : Number(used.bagsUsed);
-        if (lot.bags < reqBags) {
-          const shortageBags = reqBags - lot.bags;
-          shortfalls.push(`- ${used.lotNumber} (${used.mark}): Short by ${shortageBags} bag(s)`);
-        }
+      if (lot.weight < used.weight) {
+        shortfalls.push(`- ${used.mark} (${used.lotNumber}): short by ${(used.weight - lot.weight).toFixed(2)} kg`);
+      }
+      if (lot.bags < used.bags) {
+        shortfalls.push(`- ${used.mark} (${used.lotNumber}): short by ${used.bags - lot.bags} bag(s)`);
       }
     }
 
     if (shortfalls.length > 0) {
-      alert("Stock not available to duplicate this blend. The following shortages were found:\n\n" + shortfalls.join("\n"));
-      logSystemAction('DUPLICATE_FAILED', `Failed to duplicate ${blend.blendName} due to insufficient stock.`, true);
-      return triggerToast("Duplicate failed: Insufficient stock.", "error");
+      alert("Stock not available to duplicate this blend:\n\n" + shortfalls.join("\n"));
+      return triggerToast("Duplicate failed: insufficient stock.", "error");
     }
 
-    if (!window.confirm(`Duplicate "${blend.blendName}"? This will deduct the required stock again.`)) {
+    if (!window.confirm(`Duplicate "${blend.blendName}"? This deducts the same stock again and creates a new blend with its own serial number.`)) {
       return;
     }
 
-    setLooseInventory((prev: LooseLot[]) => prev.map(lot => {
-      const usedLot = blend.lotsUsed.find(l => l.lotNumber === lot.lotNumber && l.mark === lot.mark);
-      if (usedLot) {
-        if (lot.id.startsWith('l-')) {
-          return { ...lot, weight: lot.weight - usedLot.weightUsed };
-        } else {
-          const bagsDeduct = usedLot.bagsUsed === '-' ? 0 : Number(usedLot.bagsUsed);
-          const weightDeduct = usedLot.weightUsed;
-          return { ...lot, bags: lot.bags - bagsDeduct, weight: lot.weight - weightDeduct };
-        }
-      }
-      return lot;
-    }));
-
-    const newBlend: BlendProcess = {
-      ...blend,
-      id: 'PRC-' + Date.now().toString().slice(-8),
-      blendName: `${blend.blendName} (Copy)`,
-      date: new Date().toISOString().split('T')[0],
-      status: 'PENDING'
-    };
-
-    setUnderProcess((prev: BlendProcess[]) => [newBlend, ...prev]);
-    logSystemAction('DUPLICATE_BLEND', `Duplicated blend into ${newBlend.blendName} (${newBlend.totalQuantity}kg)`);
-    triggerToast(`Blend duplicated successfully!`);
+    await onDuplicateBlend(blend);
   };
 
   return (
@@ -567,9 +446,10 @@ export default function ProcessModule({
               </button>
               <button 
                 onClick={submitFinalization} 
-                className="bg-[#0B172B] hover:bg-[#009965] shadow-[0_5px_15px_rgba(11,23,43,0.1)] text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all"
+                disabled={isBusy}
+                className="disabled:opacity-60 disabled:cursor-not-allowed bg-[#0B172B] hover:bg-[#009965] shadow-[0_5px_15px_rgba(11,23,43,0.1)] text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all"
               >
-                Complete Packout & Store Stock
+                {isBusy ? <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Saving…</span> : 'Complete Packout & Store Stock'}
               </button>
             </div>
           </div>
@@ -585,9 +465,10 @@ export default function ProcessModule({
           {systemUser.role !== 'user' && selectedForMerge.length > 1 && (
             <button 
               onClick={handleMerge}
-              className="px-4 py-2 bg-[#0B172B] text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#009965] transition-all shadow-sm shrink-0"
+              disabled={isBusy}
+              className="disabled:opacity-60 disabled:cursor-not-allowed px-4 py-2 bg-[#0B172B] text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#009965] transition-all shadow-sm shrink-0"
             >
-              <Combine size={16} /> Merge ({selectedForMerge.length})
+              {isBusy ? <Loader2 size={16} className="animate-spin" /> : <Combine size={16} />} Merge ({selectedForMerge.length})
             </button>
           )}
         </div>
@@ -674,6 +555,8 @@ export default function ProcessModule({
                       type="checkbox" 
                       checked={selectedForMerge.includes(blend.id)}
                       onChange={() => toggleMergeSelect(blend.id)}
+                      disabled={isBusy}
+                      title="Select to merge with other blends"
                       className="mt-1 w-4.5 h-4.5 text-[#009965] rounded cursor-pointer border-[#0B172B]/20 focus:ring-[#009965]"
                     />
                   )}
@@ -718,14 +601,16 @@ export default function ProcessModule({
                   </button>
                   <button 
                     onClick={() => handleDuplicateBlend(blend)}
+                    disabled={isBusy}
                     className="bg-white text-[#0B172B]/70 border border-[#0B172B]/10 hover:bg-[#F0F5F9] hover:text-[#009965] px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
                     title="Duplicate Blend"
                   >
                     <Copy size={14} /> Duplicate
                   </button>
-                  {systemUser.role === 'super_admin' && (
+                  {canDelete && (
                     <button 
                       onClick={() => handleDeleteBlend(blend)}
+                      disabled={isBusy}
                       className="bg-white text-rose-500 border border-rose-100 hover:bg-rose-50 px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
                       title="Delete Blend"
                     >
@@ -741,6 +626,7 @@ export default function ProcessModule({
                   </button>
                   <button 
                     onClick={() => initFinalizeFlow(blend)}
+                    disabled={isBusy}
                     className="bg-white text-[#0B172B]/70 border border-[#0B172B]/10 hover:bg-[#F0F5F9] px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
                   >
                     <Check size={14} /> Finalize to Packet Stock

@@ -83,7 +83,7 @@ export async function fetchActiveFieldDevices() {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    const userRole = (user?.user_metadata?.role || '').toLowerCase()
+    const userRole = (user?.app_metadata?.role || '').toLowerCase()
     const isManagement = ['admin', 'manager'].includes(userRole)
 
     let query = supabaseAdmin
@@ -105,7 +105,7 @@ export async function fetchActiveFieldDevices() {
 
     let usersMap = new Map<string, any>()
     try {
-      const { data: usersData } = await supabaseAdmin.auth.admin.listUsers()
+      const { data: usersData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
       if (usersData?.users) {
         usersMap = new Map(usersData.users.map((u: any) => [u.id, u]))
       }
@@ -116,7 +116,7 @@ export async function fetchActiveFieldDevices() {
     return shifts.map((s: any, idx: number) => {
       const u = usersMap.get(s.user_id)
       const userName = u?.user_metadata?.name || u?.user_metadata?.full_name || u?.email?.split('@')[0] || 'Field Personnel'
-      const userRole = u?.user_metadata?.role || 'Sales'
+      const userRole = u?.app_metadata?.role || 'Sales'
 
       return {
         id: s.id,
@@ -195,6 +195,7 @@ export async function pauseShift(shiftId: string) {
     return { error: "Session expired. Please log in again." }
   }
   const paused_at = new Date().toISOString()
+  // Only the owner's own ACTIVE shift can be paused (never a completed one)
   const { data, error } = await supabase
     .from('shifts')
     .update({ 
@@ -202,10 +203,13 @@ export async function pauseShift(shiftId: string) {
       paused_at
     })
     .eq('id', shiftId)
+    .eq('user_id', user.id)
+    .eq('status', 'active')
     .select()
-    .single()
+    .maybeSingle()
 
   if (error) return { error: error.message }
+  if (!data) return { error: 'This shift is not active, so it cannot be paused. Refresh the page.' }
   revalidatePath('/dashboard')
   return { success: true, shift: data }
 }
@@ -218,12 +222,16 @@ export async function resumeShift(shiftId: string) {
   }
   const { data: shift, error: fetchErr } = await supabase
     .from('shifts')
-    .select('paused_at, total_paused_seconds')
+    .select('paused_at, total_paused_seconds, status')
     .eq('id', shiftId)
+    .eq('user_id', user.id)
     .single()
 
   if (fetchErr || !shift) {
     return { error: fetchErr?.message || 'Shift not found' }
+  }
+  if (shift.status !== 'paused') {
+    return { error: 'This shift is not paused. Refresh the page.' }
   }
 
   const now = Date.now()
@@ -243,10 +251,13 @@ export async function resumeShift(shiftId: string) {
       total_paused_seconds: updatedTotalPaused
     })
     .eq('id', shiftId)
+    .eq('user_id', user.id)
+    .eq('status', 'paused')
     .select()
-    .single()
+    .maybeSingle()
 
   if (error) return { error: error.message }
+  if (!data) return { error: 'This shift changed while resuming. Refresh the page.' }
   revalidatePath('/dashboard')
   return { success: true, shift: data }
 }
@@ -258,25 +269,38 @@ export async function endShift(formData: FormData) {
     return { error: "Session expired. Please log in again." }
   }
   const shiftId = formData.get('shift_id') as string
-  const odometer_end = parseFloat(formData.get('odometer_end') as string) || 0
+  const rawOdo = ((formData.get('odometer_end') as string) || '').trim()
+  const rawCash = ((formData.get('cash_deposited') as string) || '').trim()
   const end_location = (formData.get('end_location') as string)?.trim() || null
-  const cash_deposited = parseFloat(formData.get('cash_deposited') as string) || 0
   const notes = (formData.get('notes') as string)?.trim() || null
 
-  // Fetch shift details to compute final distance & cash discrepancy (Fix M2: ensure shift is active/paused)
+  // Fetch the user's own shift to compute final distance & cash discrepancy
   const { data: shift, error: fetchErr } = await supabase
     .from('shifts')
     .select('*')
     .eq('id', shiftId)
+    .eq('user_id', user.id)
     .single()
 
   if (fetchErr || !shift) return { error: "Shift not found" }
-
-  if (shift.status === 'completed' || shift.status === 'cancelled') {
-    return { error: `Shift has already been ${shift.status} and cannot be ended again.` }
+  if (shift.status !== 'active' && shift.status !== 'paused') {
+    return { error: 'This shift has already ended.' }
   }
 
   const startOdo = Number(shift.odometer_start) || 0
+
+  // Blank fields are rejected instead of being saved as 0
+  if (rawCash === '' || !Number.isFinite(Number(rawCash)) || Number(rawCash) < 0) {
+    return { error: 'Enter the cash deposited (enter 0 if none).' }
+  }
+  if (startOdo > 0 && (rawOdo === '' || !Number.isFinite(Number(rawOdo)))) {
+    return { error: 'Enter the closing odometer reading.' }
+  }
+  const odometer_end = rawOdo === '' ? startOdo : Number(rawOdo)
+  if (odometer_end < startOdo) {
+    return { error: `Closing reading (${odometer_end}) is lower than the opening reading (${startOdo}).` }
+  }
+  const cash_deposited = Number(rawCash)
   const total_distance = Math.max(0, odometer_end - startOdo)
   const cash_collected = Number(shift.cash_collected) || 0
   const cash_discrepancy = cash_collected - cash_deposited
@@ -302,10 +326,13 @@ export async function endShift(formData: FormData) {
       end_time: new Date().toISOString()
     })
     .eq('id', shiftId)
+    .eq('user_id', user.id)
+    .in('status', ['active', 'paused'])
     .select()
-    .single()
+    .maybeSingle()
 
   if (error) return { error: error.message }
+  if (!data) return { error: 'This shift has already ended.' }
 
   revalidatePath('/dashboard')
   return { success: true, shift: data }
@@ -318,7 +345,7 @@ export async function endShift(formData: FormData) {
 export async function fetchEmployeeAuditLedger(targetUserId?: string) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const role = (user?.user_metadata?.role || '').toLowerCase()
+  const role = (user?.app_metadata?.role || '').toLowerCase()
 
   // If user is not admin/manager, they can only view their own ledger
   const effectiveUserId = (role === 'admin' || role === 'manager') 
@@ -408,7 +435,7 @@ export async function fetchDashboardTargetsProgress(targetMonth?: string): Promi
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const userRole = (user?.user_metadata?.role || 'employee').toLowerCase()
+  const userRole = (user?.app_metadata?.role || 'employee').toLowerCase()
   const isManagement = ['admin', 'manager'].includes(userRole)
 
   // 1. Fetch Targets for the month
@@ -499,7 +526,7 @@ export async function fetchExactTerritoryDistribution(): Promise<TerritoryDistri
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    const userRole = (user?.user_metadata?.role || '').toLowerCase()
+    const userRole = (user?.app_metadata?.role || '').toLowerCase()
     const isManagement = ['admin', 'manager'].includes(userRole)
 
     let shiftsQuery = supabaseAdmin
@@ -629,10 +656,10 @@ export async function fetchFieldOperationsTimeline(): Promise<FieldActivityEvent
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    const userRole = (user?.user_metadata?.role || '').toLowerCase()
+    const userRole = (user?.app_metadata?.role || '').toLowerCase()
     const isManagement = ['admin', 'manager'].includes(userRole)
 
-    const { data: usersData } = await supabaseAdmin.auth.admin.listUsers()
+    const { data: usersData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
     const userMap = new Map<string, string>()
     usersData?.users?.forEach(u => {
       userMap.set(u.id, u.user_metadata?.name || u.email?.split('@')[0] || 'Field Staff')
@@ -784,7 +811,7 @@ export async function fetchWeeklyProgressData(): Promise<WeeklyProgressResponse>
     const { data: { user } } = await supabase.auth.getUser()
     const userId = user?.id
 
-    const userRole = (user?.user_metadata?.role || '').toLowerCase()
+    const userRole = (user?.app_metadata?.role || '').toLowerCase()
     const isManagement = ['admin', 'manager'].includes(userRole)
 
     const now = new Date()
@@ -963,7 +990,7 @@ export async function fetchDailyOperationalTargets(): Promise<DailyOperationalTa
 export async function saveDailyOperationalTargets(targets: DailyOperationalTargets) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const role = user?.user_metadata?.role
+  const role = user?.app_metadata?.role
 
   if (!user || !['admin', 'manager'].includes(role) || !(await isSessionValid())) {
     return { error: "Session expired or unauthorized. Please log in again." }

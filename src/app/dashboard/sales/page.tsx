@@ -10,7 +10,7 @@ export default async function SalesPage() {
   await connection();
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  const currentUserRole = user?.user_metadata?.role || "employee";
+  const currentUserRole = user?.app_metadata?.role || "employee";
   const currentUserId = user?.id || "";
   const currentUserName = user?.user_metadata?.name || user?.email?.split('@')[0] || "Team Member";
 
@@ -26,7 +26,7 @@ export default async function SalesPage() {
   let usersList: any[] = [];
   if (['admin', 'manager'].includes(currentUserRole)) {
     try {
-      const { data: usersData } = await supabaseAdmin.auth.admin.listUsers();
+      const { data: usersData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
       usersList = usersData?.users || [];
     } catch (e) {
       console.error("Fetch users error in SalesPage:", e);

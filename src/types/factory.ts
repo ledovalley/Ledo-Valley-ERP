@@ -36,6 +36,7 @@ export interface BlendProcess {
   }[];
   totalQuantity: number;
   status: 'PENDING' | 'PACKED' | 'CANCELLED';
+  /** Serial number assigned by the database (the SL-xx in the name) */
   serialNo?: number | null;
 }
 

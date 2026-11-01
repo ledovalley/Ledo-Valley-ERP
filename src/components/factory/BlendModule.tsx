@@ -1,53 +1,33 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Printer, Search, ArrowLeft, Lock, X, Check } from 'lucide-react';
-import { LooseLot, BlendProcess, HistoryRecord } from '@/types/factory';
+import { Printer, Search, Lock, X, Check, Loader2 } from 'lucide-react';
+import { LooseLot, BlendProcess } from '@/types/factory';
+import type { BlendSubmitInput } from '@/app/factory/FactoryDashboardClient';
 
 interface BlendModuleProps {
   looseInventory: LooseLot[];
-  setLooseInventory: React.Dispatch<React.SetStateAction<LooseLot[]>>;
-  underProcess: BlendProcess[];
-  setUnderProcess: React.Dispatch<React.SetStateAction<BlendProcess[]>>;
-  historyList: HistoryRecord[];
-  setHistoryList: (val: any) => void;
+  /** true while any save is in progress */
+  isBusy: boolean;
+  /** Saves to the database. Resolves to the saved blend, or null if it failed. */
+  onSubmitBlend: (input: BlendSubmitInput) => Promise<BlendProcess | null>;
   setActiveTab: (tab: string) => void;
   setPrintBlend: (blend: BlendProcess | null) => void;
   editingProcess: BlendProcess | null;
   setEditingProcess: (p: BlendProcess | null) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
   systemUser: any;
-  logSystemAction: (action: string, details: string, isError?: boolean) => void;
-  onCreateBlend?: (data: {
-    blendId?: string;
-    blendName: string;
-    batchNo: string;
-    date: string;
-    totalQuantity: number;
-    lots: {
-      lotId: string;
-      lotNumber: string;
-      mark: string;
-      grade?: string;
-      bagsUsed: number | string;
-      weightUsed: number;
-    }[];
-  }) => Promise<{ success: boolean; blendId?: string; serialNo?: number; error?: string }>;
+  logSystemAction?: (action: string, details: string, isError?: boolean) => void;
 }
 
 export default function BlendModule({
   looseInventory: propLooseInventory,
-  setLooseInventory,
-  underProcess,
-  setUnderProcess,
-  historyList,
-  setHistoryList,
+  isBusy,
+  onSubmitBlend,
   setActiveTab,
   setPrintBlend,
   editingProcess,
   setEditingProcess,
   triggerToast,
-  systemUser,
-  logSystemAction,
-  onCreateBlend
+  systemUser
 }: BlendModuleProps) {
   const [blendName, setBlendName] = useState('');
   const [batchNo, setBatchNo] = useState('');
@@ -56,6 +36,8 @@ export default function BlendModule({
   const [filterGrade, setFilterGrade] = useState('');
   const [looseSortBy, setLooseSortBy] = useState('default');
   const [editedBlendId, setEditedBlendId] = useState<string | null>(null);
+  const [editedSerial, setEditedSerial] = useState<number | null>(null);
+  const [editedBatchNo, setEditedBatchNo] = useState<string | null>(null);
   const [initialEditLotIds, setInitialEditLotIds] = useState<Set<string>>(new Set());
   const [originalLotsUsed, setOriginalLotsUsed] = useState<Record<string, number>>({});
   const [showPreviewModal, setShowPreviewModal] = useState(false);
@@ -72,15 +54,20 @@ export default function BlendModule({
   useEffect(() => {
     if (editingProcess) {
       setEditedBlendId(editingProcess.id);
-      setBlendName(editingProcess.blendName);
+      setEditedSerial(editingProcess.serialNo ?? null);
+      setEditedBatchNo(editingProcess.batchNo || null);
+      // The serial (| SL-xx) is kept by the database; edit only the base name
+      setBlendName(editingProcess.blendName.replace(/\s*\|\s*SL-\d+\s*$/, ''));
 
       const newSelectedLots: Record<string, number> = {};
       const initialIds = new Set<string>();
       const origUsed: Record<string, number> = {};
       editingProcess.lotsUsed.forEach((lot: any) => {
+        if (!lot.lotId) return; // lot no longer exists
         const qty = lot.lotId.startsWith('l-') ? lot.weightUsed : (parseFloat(lot.bagsUsed as string) || 0);
-        newSelectedLots[lot.lotId] = qty;
-        origUsed[lot.lotId] = qty;
+        // A merged blend can use the same lot more than once: add them together
+        newSelectedLots[lot.lotId] = (newSelectedLots[lot.lotId] || 0) + qty;
+        origUsed[lot.lotId] = (origUsed[lot.lotId] || 0) + qty;
         initialIds.add(lot.lotId);
       });
       setSelectedLots(newSelectedLots);
@@ -213,55 +200,18 @@ export default function BlendModule({
     setShowPreviewModal(true);
   };
 
-  const handleResetSerials = async () => {
-    if (!window.confirm("Are you sure you want to purge all test blends (with SL- in the name) to reset the serial number to SL-01?")) return;
-
-    // Purge from History
-    const historyToPurge = historyList.filter(h => h.details?.blendName?.includes('| SL-'));
-    historyToPurge.forEach(h => {
-      setHistoryList((prev: any) => prev.filter((item: any) => item.id !== h.id));
-    });
-
-    // Purge from Under Process
-    const processToPurge = underProcess.filter(p => p.blendName?.includes('| SL-'));
-    if (processToPurge.length > 0) {
-      const remainingProcess = underProcess.filter(p => !p.blendName?.includes('| SL-'));
-      setUnderProcess(remainingProcess);
-    }
-
-    triggerToast(`Reset complete. Purged ${historyToPurge.length + processToPurge.length} test blends. Serial will now start at SL-01.`);
-  };
-
+  // Preview only: the database assigns the serial number when the blend is saved,
+  // so two people creating blends at once can never get the same number.
   const getGeneratedBlendName = () => {
-    let finalBlendName = blendName.trim();
-    if (!/\|\s*SL-\d+$/.test(finalBlendName)) {
-      let maxSerial = 0;
-
-      const extractSerial = (name: string) => {
-        if (!name) return;
-        const match = name.match(/\|\s*SL-(\d+)$/);
-        if (match) {
-          const num = parseInt(match[1], 10);
-          if (num > maxSerial) maxSerial = num;
-        }
-      };
-
-      underProcess.forEach(b => extractSerial(b.blendName));
-      historyList.forEach(h => {
-        if (h.details && h.details.blendName) {
-          extractSerial(h.details.blendName);
-        }
-      });
-
-      const nextSL = `SL-${(maxSerial + 1).toString().padStart(2, '0')}`;
-      finalBlendName = `${finalBlendName} | ${nextSL}`;
-    }
-    return finalBlendName;
+    const base = blendName.trim().replace(/\s*\|\s*SL-\d+\s*$/, '');
+    if (editedBlendId && editedSerial) return `${base} | SL-${String(editedSerial).padStart(2, '0')}`;
+    if (editedBlendId) return base;
+    return `${base} | SL-(assigned on save)`;
   };
 
   const confirmSubmitBlend = async () => {
-    setShowPreviewModal(false);
-    const finalBatchNo = `BLEND-LV-${batchNo}`;
+    if (isBusy) return;
+    const finalBatchNo = editedBatchNo || `BLEND-LV-${batchNo}`;
 
     const lotsUsedArray = Object.keys(selectedLots).map(id => {
       const l = looseInventory.find(i => i.id === id);
@@ -278,105 +228,33 @@ export default function BlendModule({
       };
     }).filter(Boolean) as BlendProcess['lotsUsed'];
 
-    const targetBlendName = getGeneratedBlendName();
-    const targetBlendId = editedBlendId || 'BLD-' + Date.now().toString().slice(-6);
+    // Save to the database first. Nothing on screen changes unless it saved.
+    const saved = await onSubmitBlend({
+      editingBlendId: editedBlendId,
+      blendName: blendName.trim(),
+      batchNo: finalBatchNo,
+      date: new Date().toISOString().split('T')[0],
+      lots: lotsUsedArray
+    });
 
-    // If server action is available, persist ACID blend transaction to Supabase
-    if (onCreateBlend) {
-      const res = await onCreateBlend({
-        blendId: targetBlendId,
-        blendName: targetBlendName,
-        batchNo: finalBatchNo,
-        date: new Date().toISOString().split('T')[0],
-        totalQuantity: totalBlendWeight,
-        lots: lotsUsedArray.map(l => ({
-          lotId: l.lotId || '',
-          lotNumber: l.lotNumber,
-          mark: l.mark,
-          grade: l.grade,
-          bagsUsed: l.bagsUsed,
-          weightUsed: l.weightUsed
-        }))
-      });
-
-      if (!res.success) {
-        return; // Toast error handled in parent
-      }
-
-      const createdBlend: BlendProcess = {
-        id: res.blendId || targetBlendId,
-        blendName: targetBlendName,
-        batchNo: finalBatchNo,
-        totalQuantity: totalBlendWeight,
-        status: 'PENDING',
-        date: new Date().toISOString().split('T')[0],
-        lotsUsed: lotsUsedArray
-      };
-
-      setPrintBlend(createdBlend);
-    } else {
-      // Fallback local state if no server action
-      const newBlend: BlendProcess = {
-        id: targetBlendId,
-        blendName: targetBlendName,
-        batchNo: finalBatchNo,
-        totalQuantity: totalBlendWeight,
-        status: 'PENDING',
-        date: new Date().toISOString().split('T')[0],
-        lotsUsed: lotsUsedArray
-      };
-
-      setLooseInventory(prev => {
-        // 1. Add back the original lots
-        const intermediate = prev.map(lot => {
-          const origQty = originalLotsUsed[lot.id];
-          if (origQty) {
-            if (lot.id.startsWith('l-')) {
-              return { ...lot, weight: lot.weight + origQty };
-            } else {
-              return { ...lot, bags: lot.bags + origQty, weight: lot.weight + (origQty * lot.weightPerBag) };
-            }
-          }
-          return lot;
-        });
-
-        // 2. Deduct the new selected lots
-        return intermediate.map(lot => {
-          if (selectedLots[lot.id]) {
-            if (lot.id.startsWith('l-')) {
-              const weightToDeduct = selectedLots[lot.id];
-              return { ...lot, weight: Math.max(0, lot.weight - weightToDeduct) };
-            } else {
-              const bagsToDeduct = selectedLots[lot.id];
-              const weightToDeduct = getLotCalculatedWeight(lot, bagsToDeduct);
-              return {
-                ...lot,
-                bags: Math.max(0, lot.bags - bagsToDeduct),
-                weight: Math.max(0, lot.weight - weightToDeduct)
-              };
-            }
-          }
-          return lot;
-        });
-      });
-
-      setUnderProcess(prev => {
-        const filtered = editedBlendId ? prev.filter(b => b.id !== editedBlendId) : prev;
-        return [newBlend, ...filtered];
-      });
-
-      setPrintBlend(newBlend);
-      triggerToast(editedBlendId ? `Blend [${newBlend.id}] successfully updated!` : `Blend [${newBlend.id}] created and sent to printer.`);
+    if (!saved) {
+      // Keep the form filled in so nothing the user entered is lost
+      setShowPreviewModal(false);
+      return;
     }
 
-    // Reset form after submission
+    setShowPreviewModal(false);
+    setPrintBlend(saved);
+
+    // Reset form after a successful save
     setEditedBlendId(null);
+    setEditedSerial(null);
+    setEditedBatchNo(null);
     setInitialEditLotIds(new Set());
     setOriginalLotsUsed({});
     setBlendName('');
     setSelectedLots({});
 
-    // Explicitly navigate user to process tab to see the new blend
     setActiveTab('process');
   };
 
@@ -391,7 +269,8 @@ export default function BlendModule({
           <div className="flex gap-3">
             <button
               onClick={handleSubmitBlend}
-              className="bg-[#0B172B] hover:bg-[#1a2b4b] text-white px-4 py-2.5 rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg text-sm shadow-[#0B172B]/10 transition-all duration-200"
+              disabled={isBusy}
+              className="disabled:opacity-60 disabled:cursor-not-allowed bg-[#0B172B] hover:bg-[#1a2b4b] text-white px-4 py-2.5 rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg text-sm shadow-[#0B172B]/10 transition-all duration-200"
             >
               <Printer size={18} />
               {editedBlendId ? 'Update & Print Blend Sheet' : 'Submit & Print Blend Sheet'}
@@ -420,7 +299,7 @@ export default function BlendModule({
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-[#0B172B]/50 uppercase tracking-widest mb-1">Batch Code</span>
-                    <span className="text-lg font-bold font-mono text-[#0B172B]">BLEND-LV-{batchNo}</span>
+                    <span className="text-lg font-bold font-mono text-[#0B172B]">{editedBatchNo || `BLEND-LV-${batchNo}`}</span>
                   </div>
                 </div>
               </div>
@@ -473,10 +352,11 @@ export default function BlendModule({
                 </button>
                 <button
                   onClick={confirmSubmitBlend}
-                  className="flex-1 py-3.5 rounded-xl font-bold bg-[#009965] hover:bg-[#007a50] text-white flex items-center justify-center gap-2 shadow-lg shadow-[#009965]/20 transition-all duration-200"
+                  disabled={isBusy}
+                  className="disabled:opacity-60 disabled:cursor-not-allowed flex-1 py-3.5 rounded-xl font-bold bg-[#009965] hover:bg-[#007a50] text-white flex items-center justify-center gap-2 shadow-lg shadow-[#009965]/20 transition-all duration-200"
                 >
-                  <Check size={18} />
-                  Confirm & Generate Sheet
+                  {isBusy ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
+                  {isBusy ? 'Saving…' : editedBlendId ? 'Confirm & Save Changes' : 'Confirm & Generate Sheet'}
                 </button>
               </div>
             </div>
@@ -492,7 +372,7 @@ export default function BlendModule({
         <div>
           <label className="block text-xs font-bold text-[#0B172B]/70 uppercase mb-1">Batch Code (Fixed)</label>
           <div className="flex items-center w-full px-4 py-2.5 border border-[#0B172B]/10 rounded-xl bg-[#F0F5F9]/50 transition-all duration-200">
-            <input type="text" value={batchNo} readOnly className="bg-transparent outline-none text-sm font-bold text-[#0B172B] flex-1 w-full" />
+            <input type="text" value={editedBatchNo || batchNo} readOnly className="bg-transparent outline-none text-sm font-bold text-[#0B172B] flex-1 w-full" />
           </div>
         </div>
       </div>

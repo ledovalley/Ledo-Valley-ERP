@@ -4,7 +4,8 @@ import {
   fetchLooseLots,
   fetchPacketCatalog,
   fetchUnderProcessBlends,
-  fetchFactoryHistory
+  fetchFactoryHistory,
+  fetchMissingSerials
 } from "./actions";
 import { signOut } from "@/app/dashboard/actions";
 import FactoryDashboardClient from "./FactoryDashboardClient";
@@ -21,17 +22,20 @@ export default async function FactoryPage() {
     redirect("/login");
   }
 
-  const role = user.user_metadata?.role || "employee";
+  const role = (user.app_metadata?.role as string) || "";
   const email = user.email || "";
   const name = user.user_metadata?.name || email.split("@")[0];
   const lastSignInAt = user.last_sign_in_at;
 
   // Fetch initial state in parallel
-  const [lots, blends, historyRows, catalogProducts] = await Promise.all([
+  // These throw on a database error, so the page shows an error instead of
+  // empty lists that look like lost data.
+  const [lots, blends, historyRows, catalogProducts, missingSerials] = await Promise.all([
     fetchLooseLots(),
     fetchUnderProcessBlends(),
     fetchFactoryHistory(),
-    fetchPacketCatalog()
+    fetchPacketCatalog(),
+    fetchMissingSerials()
   ]);
 
   // Map history rows to HistoryRecord
@@ -51,6 +55,7 @@ export default async function FactoryPage() {
       initialBlends={blends}
       initialHistory={historyRecords}
       initialProducts={catalogProducts}
+      initialMissingSerials={missingSerials}
       userRole={role}
       userEmail={email}
       userName={name}

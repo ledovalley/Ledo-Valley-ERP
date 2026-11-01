@@ -4,7 +4,6 @@ import { connection } from "next/server";
 import Link from "next/link";
 import { ArrowRight, Factory, LayoutDashboard, Sparkles, Download } from "lucide-react";
 import { signOut } from "@/app/dashboard/actions";
-import { getUserRole } from "@/utils/authRoles";
 import TopNavbar from "@/components/layout/TopNavbar";
 import SessionMonitor from "@/components/auth/SessionMonitor";
 
@@ -19,7 +18,7 @@ export default async function PortalPage() {
     redirect("/login");
   }
 
-  const role = getUserRole(user);
+  const role = user.app_metadata?.role || "employee";
   const email = user.email || "";
   const initial = email.charAt(0).toUpperCase();
   const lastSignInAt = user.last_sign_in_at;
@@ -129,14 +128,15 @@ export default async function PortalPage() {
           {role === "admin" && (
             <div className="mt-6 bg-white/80 border border-slate-200/80 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-bold text-slate-900">Data Backup (Offsite Recovery)</div>
+                <div className="text-sm font-bold text-slate-900">Data backup</div>
                 <p className="text-xs text-slate-600 mt-0.5">
-                  A full database snapshot runs automatically every night. Download an encrypted/gzipped copy now for local archival.
+                  A full backup runs automatically every night. Download a copy now to keep it safe outside Supabase.
                 </p>
               </div>
+              {/* Plain link: the route sends the file as a download */}
               <a
                 href="/api/backup/download"
-                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#0D4728] text-[#FFF9CD] text-sm font-bold hover:bg-[#0B3A21] transition-colors shrink-0 shadow-sm"
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#0D4728] text-[#FFF9CD] text-sm font-bold hover:bg-[#0B3A21] transition-colors shrink-0"
               >
                 <Download size={16} /> Download backup now
               </a>

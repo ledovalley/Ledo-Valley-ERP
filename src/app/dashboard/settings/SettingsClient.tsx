@@ -47,6 +47,7 @@ import {
   EmployeeTarget
 } from './actions';
 import { ASSAM_DISTRICTS } from '@/utils/districts';
+import PasswordConfirmModal from '@/components/ui/PasswordConfirmModal';
 
 interface SettingsClientProps {
   products: any[];
@@ -432,12 +433,16 @@ export default function SettingsClient({
     });
   };
 
+  // Deleting asks for the delete password (checked on the server)
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
   const handleDelete = (id: string, prodName: string) => {
-    if (confirm(`Are you sure you want to delete the product category "${prodName}"?`)) {
-      startTransition(async () => {
-        await deleteProduct(id);
-      });
-    }
+    setPendingDelete({ id, name: prodName });
+  };
+  const confirmDeleteProduct = async (password: string): Promise<string | null> => {
+    if (!pendingDelete) return null;
+    const res = await deleteProduct(pendingDelete.id, password);
+    if (res && 'error' in res && res.error) return res.error;
+    return null;
   };
 
   // Formatted Month Title e.g. "October 2026"
@@ -453,6 +458,14 @@ export default function SettingsClient({
 
   return (
     <div className="space-y-7 pb-12">
+      <PasswordConfirmModal
+        isOpen={!!pendingDelete}
+        title="Delete product?"
+        message={`Delete the product category "${pendingDelete?.name || ''}"? Consider deactivating it instead if it has been sold.`}
+        confirmText="Delete product"
+        onConfirm={confirmDeleteProduct}
+        onClose={() => setPendingDelete(null)}
+      />
 
       {/* 1. Header Bar with Tabs */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-2 border-b border-slate-200/80">

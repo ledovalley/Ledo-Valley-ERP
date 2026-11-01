@@ -53,7 +53,7 @@ export async function login(formData: FormData) {
   // - Warehouse Manager goes directly to /factory
   // - Sales Person goes directly to /dashboard
   const { data: { user } } = await supabase.auth.getUser()
-  const role = user?.user_metadata?.role
+  const role = user?.app_metadata?.role
 
   revalidatePath('/dashboard')
   revalidatePath('/portal')

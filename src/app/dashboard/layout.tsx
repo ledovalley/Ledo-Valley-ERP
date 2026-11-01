@@ -10,7 +10,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   await connection();
   const user = await getCachedUser();
 
-  const role = user?.user_metadata?.role || "Unknown Role";
+  const role = user?.app_metadata?.role || "Unknown Role";
   const email = user?.email || "No Email";
   const initial = email.charAt(0).toUpperCase();
   const lastSignInAt = user?.last_sign_in_at;

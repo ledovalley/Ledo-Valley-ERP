@@ -8,7 +8,7 @@ import { isSessionValid } from '@/app/dashboard/actions'
 export async function fetchRetailers() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const role = (user?.user_metadata?.role || '').toLowerCase()
+  const role = (user?.app_metadata?.role || '').toLowerCase()
 
   // Admins & managers see all, other staff see only theirs
   let query = supabase.from('retailers').select('*').order('created_at', { ascending: false })
@@ -127,7 +127,7 @@ export async function fetchProducts() {
 export async function fetchSalesRecords() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const role = (user?.user_metadata?.role || '').toLowerCase()
+  const role = (user?.app_metadata?.role || '').toLowerCase()
 
   let query = supabase.from('sales_records').select(`
     *,
@@ -172,10 +172,15 @@ export async function createSaleRecord(formData: FormData) {
     parsedQty = 1
   }
 
+  if (!retailer_id) return { error: 'Please select a retailer.' }
+  if ([amount, cash_amount, online_amount].some(n => !Number.isFinite(n) || n < 0)) {
+    return { error: 'Amounts cannot be negative.' }
+  }
+
   // Check if sales rep has an active shift
   const { data: activeShift } = await supabase
     .from('shifts')
-    .select('id, orders_count, visits_count, total_order_value, cash_collected, online_collected, market_due')
+    .select('id')
     .eq('user_id', user?.id)
     .eq('status', 'active')
     .order('created_at', { ascending: false })
@@ -199,7 +204,7 @@ export async function createSaleRecord(formData: FormData) {
   if (error) return { error: error.message }
 
   // Log as verified visit in retailer_visits
-  await supabase.from('retailer_visits').insert({
+  const { error: visitErr } = await supabase.from('retailer_visits').insert({
     retailer_id,
     sales_person_id: user?.id,
     shift_id: activeShift?.id || null,
@@ -207,28 +212,27 @@ export async function createSaleRecord(formData: FormData) {
     notes: `Order booked: ₹${amount.toLocaleString('en-IN')}`,
     created_at: createdAt
   })
+  if (visitErr) console.error('Sale saved but visit log failed:', newSale?.id, visitErr)
 
-  // If rep is on an active shift, auto-accumulate shift metrics atomically via Postgres (Fix H6)
+  // If rep is on an active shift, add to its totals in one atomic database
+  // update, so two orders at the same moment can't overwrite each other.
   if (activeShift) {
-    const { error: rpcErr } = await supabase.rpc('fn_record_sale_on_shift', {
+    const { error: shiftErr } = await supabase.rpc('fn_record_sale_on_shift', {
       p_shift_id: activeShift.id,
       p_order_value: amount,
       p_cash_amount: cash_amount,
       p_online_amount: online_amount,
       p_due_amount: due_amount
     })
-
-    if (rpcErr) {
-      // Fallback update if RPC is not yet executed in DB
-      console.warn('Shift atomic RPC fallback:', rpcErr.message)
-      await supabase.from('shifts').update({
-        orders_count: (activeShift.orders_count || 0) + 1,
-        visits_count: (activeShift.visits_count || 0) + 1,
-        total_order_value: (Number(activeShift.total_order_value) || 0) + amount,
-        cash_collected: (Number(activeShift.cash_collected) || 0) + cash_amount,
-        online_collected: (Number(activeShift.online_collected) || 0) + online_amount,
-        market_due: (Number(activeShift.market_due) || 0) + due_amount
-      }).eq('id', activeShift.id)
+    if (shiftErr) {
+      console.error('Sale saved but shift totals not updated:', newSale?.id, shiftErr)
+      revalidatePath('/dashboard/sales')
+      revalidatePath('/dashboard')
+      return {
+        success: true,
+        sale: newSale,
+        warning: 'Order saved, but your shift totals could not be updated. Please tell your manager.'
+      }
     }
   }
   
@@ -250,10 +254,12 @@ export async function logNoOrderVisit(formData: FormData) {
   const notes = formData.get('notes') as string
   const geo_location = formData.get('geo_location') as string
 
+  if (!retailer_id) return { error: 'Please select a retailer.' }
+
   // Check if rep has active shift
   const { data: activeShift } = await supabase
     .from('shifts')
-    .select('id, visits_count')
+    .select('id')
     .eq('user_id', user?.id)
     .eq('status', 'active')
     .order('created_at', { ascending: false })
@@ -273,18 +279,10 @@ export async function logNoOrderVisit(formData: FormData) {
 
   if (error) return { error: error.message }
 
-  // Increment visit count in active shift atomically (Fix H6)
+  // Increment visit count in active shift (atomic)
   if (activeShift) {
-    const { error: rpcErr } = await supabase.rpc('fn_increment_shift_visits', {
-      p_shift_id: activeShift.id
-    })
-
-    if (rpcErr) {
-      // Fallback update
-      await supabase.from('shifts').update({
-        visits_count: (activeShift.visits_count || 0) + 1
-      }).eq('id', activeShift.id)
-    }
+    const { error: shiftErr } = await supabase.rpc('fn_increment_shift_visits', { p_shift_id: activeShift.id })
+    if (shiftErr) console.error('Visit saved but shift visit count not updated:', data?.id, shiftErr)
   }
 
   revalidatePath('/dashboard/sales')
@@ -296,7 +294,7 @@ export async function logNoOrderVisit(formData: FormData) {
 export async function fetchRetailerVisits(limit = 50) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const role = user?.user_metadata?.role
+  const role = user?.app_metadata?.role
 
   let query = supabase.from('retailer_visits').select(`
     *,

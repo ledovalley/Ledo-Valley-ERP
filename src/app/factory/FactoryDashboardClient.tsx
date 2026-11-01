@@ -1,15 +1,12 @@
 "use client";
 
-import React, { useState, useEffect, useTransition } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Warehouse,
   Coffee,
   Settings2,
   History,
-  AlertTriangle,
-  Loader2,
-  RefreshCw,
-  Plus
+  AlertTriangle
 } from "lucide-react";
 
 import InventoryModule from "@/components/factory/InventoryModule";
@@ -19,31 +16,58 @@ import HistoryModule from "@/components/factory/HistoryModule";
 import MissingBlendsModule from "@/components/factory/MissingBlendsModule";
 import StockTakeModule from "@/components/factory/StockTakeModule";
 import ConfirmModal from "@/components/factory/ConfirmModal";
+import PasswordConfirmModal from "@/components/ui/PasswordConfirmModal";
 
 import TopNavbar from "@/components/layout/TopNavbar";
 import { LooseLot, CatalogProduct, BlendProcess, HistoryRecord, SystemUser } from "@/types/factory";
 import {
   fetchLooseLots,
   fetchPacketCatalog,
-  saveLooseLot,
+  fetchUnderProcessBlends,
+  fetchFactoryHistory,
+  fetchMissingSerials,
+  receiveLooseLot,
+  updateLooseLot,
   deleteLooseLot,
   purgeNilLooseLots,
   adjustLedgerLot,
   savePacketProduct,
   deletePacketProduct,
   receivePacketStock,
-  fetchUnderProcessBlends,
   createFactoryBlend,
+  updateFactoryBlend,
   finalizeFactoryBlend,
   deleteFactoryBlend,
-  fetchFactoryHistory
+  mergeFactoryBlends
 } from "./actions";
+
+const SYSTEM_LOT_IDS = ["l-balance", "l-orthodox", "l-cardamom", "l-cardamom-husk"];
+
+/** Input from the blend screen (create or edit) */
+export type BlendSubmitInput = {
+  editingBlendId: string | null;
+  blendName: string;
+  batchNo: string;
+  date: string;
+  lots: BlendProcess["lotsUsed"];
+};
+
+/** Input from the finalize dialog */
+export type FinalizeInput = {
+  blendId: string;
+  returnedLoose: number;
+  outputs: { productId: string; quantity: number }[];
+};
+
+type AnyResult = { success: true } | { success?: false; error: string };
+type Ok<R> = Extract<R, { success: true }>;
 
 interface FactoryDashboardProps {
   initialLots: LooseLot[];
   initialBlends: BlendProcess[];
   initialHistory: HistoryRecord[];
   initialProducts: CatalogProduct[];
+  initialMissingSerials: string[];
   userRole: string;
   userEmail: string;
   userName: string;
@@ -52,11 +76,23 @@ interface FactoryDashboardProps {
   signOutAction: () => Promise<void>;
 }
 
+const mapHistory = (rows: any[]): HistoryRecord[] =>
+  rows.map((h: any) => ({
+    id: h.id,
+    type: h.type,
+    desc: h.description,
+    timestamp: h.timestamp,
+    userId: h.user_id,
+    userName: h.user_name,
+    details: h.details
+  }));
+
 export default function FactoryDashboardClient({
   initialLots,
   initialBlends,
   initialHistory,
   initialProducts,
+  initialMissingSerials,
   userRole,
   userEmail,
   userName,
@@ -69,12 +105,25 @@ export default function FactoryDashboardClient({
   const [underProcess, setUnderProcess] = useState<BlendProcess[]>(initialBlends);
   const [historyList, setHistoryList] = useState<HistoryRecord[]>(initialHistory);
   const [packetCatalog, setPacketCatalog] = useState<CatalogProduct[]>(initialProducts);
+  const [missingBlends, setMissingBlends] = useState<string[]>(initialMissingSerials);
 
   const [editingProcess, setEditingProcess] = useState<BlendProcess | null>(null);
   const [printBlend, setPrintBlend] = useState<BlendProcess | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [isBusy, setIsBusy] = useState(false);
+  // Every delete asks for the delete password (checked on the server)
+  const [deleteModal, setDeleteModal] = useState<{
+    title: string;
+    message: string;
+    confirmText?: string;
+    run: (password: string) => Promise<AnyResult>;
+    successMessage: string | ((res: any) => string);
+  } | null>(null);
+  const busyRef = useRef(false);
+  const lastBlendsRef = useRef<BlendProcess[] | null>(null);
+
+  const canManage = userRole === "admin" || userRole === "manager";
 
   const systemUser: SystemUser = {
     uid: userId,
@@ -88,13 +137,11 @@ export default function FactoryDashboardClient({
   // Toast trigger helper
   const triggerToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 4000);
+    setTimeout(() => setToast(null), type === "error" ? 7000 : 4000);
   };
 
-  // Log system action
-  const logSystemAction = (action: string, details: string, isError: boolean = false) => {
-    console.log(`[Factory Log] ${action}: ${details}`);
-  };
+  // Audit history is written on the server by every action; nothing to do here.
+  const logSystemAction = (_action: string, _details: string, _isError: boolean = false) => {};
 
   // Print listener for blend sheet
   useEffect(() => {
@@ -108,422 +155,294 @@ export default function FactoryDashboardClient({
     }
   }, [printBlend]);
 
-  // Missing blends calculation (Gap Analysis)
-  const missingBlends: string[] = (() => {
-    let maxSerial = 0;
-    const serialsFound = new Set<number>();
-
-    const extractSerial = (name: string) => {
-      if (!name) return;
-      const match = name.match(/\|\s*SL-(\d+)$/);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        serialsFound.add(num);
-        if (num > maxSerial) maxSerial = num;
-      }
-    };
-
-    underProcess.forEach(b => extractSerial(b.blendName));
-    historyList.forEach(h => {
-      if (h.details && h.details.blendName) {
-        extractSerial(h.details.blendName);
-      }
-    });
-
-    const missing: string[] = [];
-    for (let i = 1; i <= maxSerial; i++) {
-      if (!serialsFound.has(i)) {
-        missing.push(`SL-${i.toString().padStart(2, "0")}`);
-      }
-    }
-    return missing;
-  })();
-
-  // Refresh data from PostgreSQL
-  const refreshData = () => {
-    startTransition(async () => {
-      const [lots, blends, hist] = await Promise.all([
+  // ---------------------------------------------------------------------------
+  // Loading from the database. The screen only ever shows what the database
+  // holds: after every change we reload rather than patching local state.
+  // ---------------------------------------------------------------------------
+  const reloadAll = async (): Promise<BlendProcess[] | null> => {
+    try {
+      const [lots, blends, hist, products, missing] = await Promise.all([
         fetchLooseLots(),
         fetchUnderProcessBlends(),
-        fetchFactoryHistory()
+        fetchFactoryHistory(),
+        fetchPacketCatalog(),
+        fetchMissingSerials()
       ]);
       setLooseInventory(lots);
       setUnderProcess(blends);
-      setHistoryList(hist.map((h: any) => ({
-        id: h.id,
-        type: h.type,
-        desc: h.description,
-        timestamp: h.timestamp,
-        userId: h.user_id,
-        userName: h.user_name,
-        details: h.details
-      })));
-      triggerToast("Factory data synced with database.");
-    });
+      setHistoryList(mapHistory(hist));
+      setPacketCatalog(products);
+      setMissingBlends(missing);
+      lastBlendsRef.current = blends;
+      return blends;
+    } catch (err) {
+      triggerToast(
+        `Saved, but the screen could not refresh: ${err instanceof Error ? err.message : String(err)}. Reload the page.`,
+        "error"
+      );
+      return null;
+    }
   };
 
-  // Handlers for Lots
-  const handleDeleteLooseItem = (id: string) => {
-    setConfirmModal({
-      title: "Delete Loose Tea Lot?",
-      message: `Are you sure you want to permanently delete lot ${id}?`,
-      onConfirm: () => {
-        startTransition(async () => {
-          const res = await deleteLooseLot(id);
-          if (res?.error) {
-            triggerToast(res.error, "error");
-          } else {
-            setLooseInventory(prev => prev.filter(item => item.id !== id));
-            triggerToast("Lot deleted successfully.");
-          }
-        });
+  /**
+   * Runs a server action, shows its error if any, reloads from the database on
+   * success, and only then reports success. Blocks double submission.
+   */
+  const runAction = async <R extends AnyResult>(
+    fn: () => Promise<R>,
+    successMessage?: string | ((res: Ok<R>) => string)
+  ): Promise<Ok<R> | null> => {
+    if (busyRef.current) return null;
+    busyRef.current = true;
+    setIsBusy(true);
+    try {
+      const res = await fn();
+      if (!res || !("success" in res) || res.success !== true) {
+        triggerToast(res && "error" in res && res.error ? res.error : "Not saved. Please try again.", "error");
+        return null;
       }
+      const ok = res as Ok<R>;
+      await reloadAll();
+      if (successMessage) {
+        triggerToast(typeof successMessage === "function" ? successMessage(ok) : successMessage);
+      }
+      return ok;
+    } catch (err) {
+      triggerToast(err instanceof Error ? err.message : "Something went wrong. Nothing was saved.", "error");
+      return null;
+    } finally {
+      busyRef.current = false;
+      setIsBusy(false);
+    }
+  };
+
+  /** Runs the delete in the open password dialog. Returns an error to show in the dialog, or null when done. */
+  const confirmDelete = async (password: string): Promise<string | null> => {
+    const modal = deleteModal;
+    if (!modal) return null;
+    if (busyRef.current) return "Please wait, another change is still saving.";
+    busyRef.current = true;
+    setIsBusy(true);
+    try {
+      const res = await modal.run(password);
+      if (!res || !("success" in res) || res.success !== true) {
+        return res && "error" in res && res.error ? res.error : "Not deleted. Please try again.";
+      }
+      await reloadAll();
+      triggerToast(typeof modal.successMessage === "function" ? modal.successMessage(res) : modal.successMessage);
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : "Something went wrong. Nothing was deleted.";
+    } finally {
+      busyRef.current = false;
+      setIsBusy(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Loose lots
+  // ---------------------------------------------------------------------------
+  const handleReceiveLooseLot = (lot: Omit<LooseLot, "id" | "weight">) =>
+    runAction(
+      () => receiveLooseLot(lot),
+      `Lot ${lot.lotNumber} (${lot.mark}) received and saved.`
+    ).then(res => !!res);
+
+  const handleDeleteLooseItem = (id: string) => {
+    const lot = looseInventory.find(l => l.id === id);
+    setDeleteModal({
+      title: "Delete Loose Tea Lot?",
+      message: lot
+        ? `Permanently delete lot ${lot.lotNumber} (${lot.mark})? It still holds ${lot.bags} bags / ${lot.weight.toFixed(2)} kg.`
+        : `Permanently delete lot ${id}?`,
+      confirmText: "Delete lot",
+      run: password => deleteLooseLot(id, password),
+      successMessage: "Lot deleted."
     });
   };
 
   const handlePurgeNilLooseStock = () => {
-    const systemIds = ["l-balance", "l-orthodox", "l-cardamom", "l-cardamom-husk"];
-    const nilLots = looseInventory.filter(item => !systemIds.includes(item.id) && (Number(item.bags) <= 0 || Number(item.weight) <= 0));
+    // Same rule as the server: a lot is empty only when it has no weight left
+    const nilLots = looseInventory.filter(item => !SYSTEM_LOT_IDS.includes(item.id) && Number(item.weight) <= 0);
     if (nilLots.length === 0) {
-      triggerToast("No NIL stock lots found to purge.", "error");
+      triggerToast("No empty lots found to purge.", "error");
       return;
     }
 
-    setConfirmModal({
-      title: "Purge All NIL Stock?",
-      message: `Are you sure you want to permanently delete all ${nilLots.length} empty loose tea lots?`,
-      onConfirm: () => {
-        startTransition(async () => {
-          const res = await purgeNilLooseLots();
-          if (res?.error) {
-            triggerToast(res.error, "error");
-          } else {
-            setLooseInventory(prev => prev.filter(item => systemIds.includes(item.id) || (Number(item.bags) > 0 && Number(item.weight) > 0)));
-            triggerToast(`Successfully purged ${res?.count ?? nilLots.length} NIL stock lots.`);
-          }
-        });
-      }
+    setDeleteModal({
+      title: "Purge Empty Lots?",
+      message: `Permanently delete up to ${nilLots.length} lots that have no weight left? Lots used by blends under process are kept.`,
+      confirmText: "Purge",
+      run: password => purgeNilLooseLots(password),
+      successMessage: res => `Purged ${res.count ?? 0} empty lots.`
     });
   };
 
   const handleLedgerAdjustment = (targetId: string, amount: number, reason: string) => {
-    startTransition(async () => {
-      const res = await adjustLedgerLot(targetId, amount, reason);
-      if (res?.error) {
-        triggerToast(res.error, "error");
-      } else {
-        const updatedWeight = res.newWeight ?? 0;
-        setLooseInventory(prev => prev.map(item => {
-          if (item.id === targetId) {
-            return {
-              ...item,
-              weight: updatedWeight
-            };
-          }
-          return item;
-        }));
-        triggerToast(`Adjusted ledger weight by ${amount > 0 ? "+" : ""}${amount} kg.`);
-      }
-    });
+    runAction(
+      () => adjustLedgerLot(targetId, amount, reason),
+      `Adjusted ledger weight by ${amount > 0 ? "+" : ""}${amount} kg.`
+    );
   };
 
-  const handleEditLooseItem = (id: string, updatedData: any) => {
-    startTransition(async () => {
-      const existing = looseInventory.find(l => l.id === id);
-      if (!existing) return;
+  const handleEditLooseItem = (id: string, updatedData: Partial<LooseLot> & { labels?: string[] | string }) => {
+    // What the user saw when they opened the form: used to detect conflicting changes
+    const existing = looseInventory.find(l => l.id === id);
+    if (!existing) return;
 
-      const newLabels = Array.isArray(updatedData.labels)
-        ? updatedData.labels
-        : (updatedData.labels || "").split(",").map((l: string) => l.trim()).filter((l: string) => l);
+    const labels = Array.isArray(updatedData.labels)
+      ? updatedData.labels
+      : String(updatedData.labels || "").split(",");
 
-      // Preserve existing consumed weight unless bags/wpb are explicitly provided and changed
-      const bagsChanged = updatedData.bags !== undefined && Number(updatedData.bags) !== existing.bags;
-      const wpbChanged = updatedData.weightPerBag !== undefined && Number(updatedData.weightPerBag) !== existing.weightPerBag;
-
-      const finalBags = updatedData.bags !== undefined ? (parseInt(updatedData.bags) || 0) : existing.bags;
-      const finalWpb = updatedData.weightPerBag !== undefined ? (parseFloat(updatedData.weightPerBag) || 0) : existing.weightPerBag;
-      
-      // If bags or wpb were explicitly edited in the modal, recompute weight, otherwise preserve current remaining weight
-      const finalWeight = (bagsChanged || wpbChanged) 
-        ? finalBags * finalWpb 
-        : (updatedData.weight !== undefined ? Number(updatedData.weight) : existing.weight);
-
-      const payload = {
-        id,
-        lotNumber: updatedData.lotNumber || existing.lotNumber,
-        mark: updatedData.mark || existing.mark,
-        grade: updatedData.grade || existing.grade,
-        bags: finalBags,
-        weightPerBag: finalWpb,
-        weight: finalWeight,
-        date: updatedData.date || existing.date,
-        labels: newLabels
-      };
-
-      const res = await saveLooseLot(payload);
-      if (res?.error) {
-        triggerToast(res.error, "error");
-      } else {
-        setLooseInventory(prev => prev.map(l => (l.id === id ? payload : l)));
-        triggerToast("Lot details updated in database.");
-      }
-    });
+    runAction(
+      () =>
+        updateLooseLot(
+          id,
+          {
+            lotNumber: updatedData.lotNumber ?? existing.lotNumber,
+            mark: updatedData.mark ?? existing.mark,
+            grade: updatedData.grade ?? existing.grade,
+            labels: labels.map(l => l.trim()).filter(Boolean),
+            bags: updatedData.bags ?? existing.bags,
+            weightPerBag: updatedData.weightPerBag ?? existing.weightPerBag
+          },
+          { bags: existing.bags, weightPerBag: existing.weightPerBag, weight: existing.weight }
+        ),
+      "Lot updated."
+    );
   };
 
-  const handleReceiveLooseLot = (lotData: {
-    lotNumber: string;
-    grade: string;
-    mark: string;
-    bags: number;
-    weightPerBag: number;
-    weight: number;
-    date: string;
-    labels: string[];
-  }) => {
-    startTransition(async () => {
-      const tempId = `lot-${Date.now()}`;
-      const payload = {
-        id: tempId,
-        ...lotData
-      };
-
-      const res = await saveLooseLot(payload);
-      if (res?.error) {
-        triggerToast(res.error, "error");
-      } else {
-        const savedLot = { ...payload, id: res?.lotId || tempId };
-        setLooseInventory(prev => [savedLot, ...prev]);
-        triggerToast(`Received loose tea lot ${lotData.lotNumber} (${lotData.mark}) saved to database!`);
-      }
-    });
-  };
-
-  const handleCreateBlend = async (data: {
-    blendId?: string;
-    blendName: string;
-    batchNo: string;
-    date: string;
-    totalQuantity: number;
-    lots: {
-      lotId: string;
-      lotNumber: string;
-      mark: string;
-      grade?: string;
-      bagsUsed: number | string;
-      weightUsed: number;
-    }[];
-  }) => {
-    return new Promise<{ success: boolean; blendId?: string; serialNo?: number; error?: string }>((resolve) => {
-      startTransition(async () => {
-        const sanitizedLots = data.lots.map(l => ({
-          lotId: l.lotId,
-          lotNumber: l.lotNumber,
-          mark: l.mark,
-          grade: l.grade,
-          bagsUsed: l.bagsUsed === '-' || l.bagsUsed === 'N/A' ? 0 : Number(l.bagsUsed),
-          weightUsed: Number(l.weightUsed)
-        }));
-
-        const res = await createFactoryBlend({
-          blendId: data.blendId,
-          blendName: data.blendName,
-          batchNo: data.batchNo,
-          date: data.date,
-          totalQuantity: data.totalQuantity,
-          lots: sanitizedLots
-        });
-
-        if (res?.error) {
-          triggerToast(res.error, "error");
-          resolve({ success: false, error: res.error });
-        } else {
-          // Re-sync loose lots and active blends from server
-          const [freshLots, freshBlends, freshHistory] = await Promise.all([
-            fetchLooseLots(),
-            fetchUnderProcessBlends(),
-            fetchFactoryHistory(100, 0)
-          ]);
-          setLooseInventory(freshLots);
-          setUnderProcess(freshBlends);
-          setHistoryList(freshHistory.map(h => ({
-            id: h.id,
-            type: h.type,
-            desc: h.description,
-            timestamp: h.timestamp,
-            userId: h.user_id,
-            userName: h.user_name,
-            details: h.details
-          })));
-
-          triggerToast(`Blend [${data.batchNo}] saved to database!`);
-          resolve({ success: true, blendId: res.blendId, serialNo: res.serialNo });
-        }
-      });
-    });
-  };
-
-  const handleFinalizeBlend = async (data: {
-    blendId: string;
-    returnedLoose: number;
-    returnLotId: string;
-    outputs: {
-      productId: string;
-      productName: string;
-      quantity: number;
-      unit: string;
-      totalWeight: number;
-    }[];
-  }) => {
-    return new Promise<{ success: boolean; error?: string }>((resolve) => {
-      startTransition(async () => {
-        const res = await finalizeFactoryBlend(data);
-        if (res?.error) {
-          triggerToast(res.error, "error");
-          resolve({ success: false, error: res.error });
-        } else {
-          const [freshLots, freshBlends, freshCatalog, freshHistory] = await Promise.all([
-            fetchLooseLots(),
-            fetchUnderProcessBlends(),
-            fetchPacketCatalog(),
-            fetchFactoryHistory(100, 0)
-          ]);
-          setLooseInventory(freshLots);
-          setUnderProcess(freshBlends);
-          setPacketCatalog(freshCatalog);
-          setHistoryList(freshHistory.map(h => ({
-            id: h.id,
-            type: h.type,
-            desc: h.description,
-            timestamp: h.timestamp,
-            userId: h.user_id,
-            userName: h.user_name,
-            details: h.details
-          })));
-
-          triggerToast("Blend declared packed & stock updated in database!");
-          resolve({ success: true });
-        }
-      });
-    });
-  };
-
-  const handleDeleteBlendAction = async (blendId: string) => {
-    return new Promise<{ success: boolean; error?: string }>((resolve) => {
-      startTransition(async () => {
-        const res = await deleteFactoryBlend(blendId);
-        if (res?.error) {
-          triggerToast(res.error, "error");
-          resolve({ success: false, error: res.error });
-        } else {
-          const [freshLots, freshBlends, freshHistory] = await Promise.all([
-            fetchLooseLots(),
-            fetchUnderProcessBlends(),
-            fetchFactoryHistory(100, 0)
-          ]);
-          setLooseInventory(freshLots);
-          setUnderProcess(freshBlends);
-          setHistoryList(freshHistory.map(h => ({
-            id: h.id,
-            type: h.type,
-            desc: h.description,
-            timestamp: h.timestamp,
-            userId: h.user_id,
-            userName: h.user_name,
-            details: h.details
-          })));
-
-          triggerToast("Blend deleted and stock safely refunded in database.");
-          resolve({ success: true });
-        }
-      });
-    });
-  };
-
+  // ---------------------------------------------------------------------------
+  // Packet catalog
+  // ---------------------------------------------------------------------------
   const handleAddCatalogProduct = (product: { name: string; unit: string; size: number; hsnCode?: string; gstRate?: number }) => {
-    startTransition(async () => {
-      const res = await savePacketProduct(product);
-      if (res?.error) {
-        triggerToast(res.error, "error");
-      } else {
-        const newProduct: CatalogProduct = {
-          id: res.id || `p-${Date.now()}`,
-          name: product.name,
-          unit: product.unit,
-          size: product.size,
-          stock: 0,
-          hsnCode: product.hsnCode || "",
-          gstRate: product.gstRate || 5
-        };
-        setPacketCatalog(prev => [...prev, newProduct]);
-        triggerToast(`Added "${product.name}" to factory packet catalog!`);
-      }
-    });
+    runAction(() => savePacketProduct(product), `Added "${product.name}" to the packet catalog.`);
   };
 
   const handleEditCatalogProduct = (id: string, updatedData: Partial<CatalogProduct>) => {
-    startTransition(async () => {
-      const existing = packetCatalog.find(p => p.id === id);
-      if (!existing) return;
+    const existing = packetCatalog.find(p => p.id === id);
+    if (!existing) return;
 
-      const payload = {
-        id,
-        name: updatedData.name || existing.name,
-        unit: updatedData.unit || existing.unit,
-        size: updatedData.size !== undefined ? updatedData.size : existing.size,
-        stock: updatedData.stock !== undefined ? updatedData.stock : existing.stock,
-        hsnCode: updatedData.hsnCode !== undefined ? updatedData.hsnCode : existing.hsnCode,
-        gstRate: updatedData.gstRate !== undefined ? updatedData.gstRate : existing.gstRate
-      };
-
-      const res = await savePacketProduct(payload);
-      if (res?.error) {
-        triggerToast(res.error, "error");
-      } else {
-        setPacketCatalog(prev => prev.map(p => (p.id === id ? { ...p, ...payload } : p)));
-        triggerToast(`Updated "${payload.name}" in factory packet catalog.`);
-      }
-    });
+    runAction(
+      () =>
+        savePacketProduct({
+          id,
+          name: updatedData.name ?? existing.name,
+          unit: updatedData.unit ?? existing.unit,
+          size: updatedData.size ?? existing.size,
+          hsnCode: updatedData.hsnCode ?? existing.hsnCode,
+          gstRate: updatedData.gstRate ?? existing.gstRate,
+          stock: updatedData.stock ?? existing.stock,
+          expectedStock: existing.stock
+        }),
+      `Updated "${updatedData.name ?? existing.name}".`
+    );
   };
 
   const handleDeleteCatalogProduct = (id: string) => {
     const existing = packetCatalog.find(p => p.id === id);
-    if (id === 'p-variance') {
+    if (id === "p-variance") {
       triggerToast("System variance ledger cannot be deleted.", "error");
       return;
     }
 
-    setConfirmModal({
+    setDeleteModal({
       title: "Delete Packet Product Template?",
-      message: `Are you sure you want to delete "${existing?.name || id}" from the packet catalog?`,
-      onConfirm: () => {
-        startTransition(async () => {
-          const res = await deletePacketProduct(id);
-          if (res?.error) {
-            triggerToast(res.error, "error");
-          } else {
-            setPacketCatalog(prev => prev.filter(p => p.id !== id));
-            triggerToast("Product template deleted from packet catalog.");
-          }
-        });
-      }
+      message: `Delete "${existing?.name || id}" from the packet catalog?${existing && existing.stock > 0 ? ` It still shows ${existing.stock} in stock.` : ""}`,
+      confirmText: "Delete product",
+      run: password => deletePacketProduct(id, password),
+      successMessage: "Product template deleted."
     });
   };
 
-  const handleReceivePacketStock = async (productId: string, quantity: number, date: string) => {
-    startTransition(async () => {
-      const res = await receivePacketStock({ productId, quantity, date });
-      if (res?.error) {
-        triggerToast(res.error, "error");
-      } else {
-        setPacketCatalog(prev => prev.map(p => {
-          if (p.id === productId) {
-            return { ...p, stock: res.newStock ?? (p.stock + quantity) };
-          }
-          return p;
-        }));
-        triggerToast("Packaged stock updated in database.");
+  const handleReceivePacketStock = (productId: string, quantity: number, date: string) =>
+    runAction(
+      () => receivePacketStock({ productId, quantity, date }),
+      res => `Packaged stock received. New stock: ${res.newStock}.`
+    ).then(res => !!res);
+
+  // ---------------------------------------------------------------------------
+  // Blends
+  // ---------------------------------------------------------------------------
+  /** Create or edit a blend. Returns the saved blend (for printing) or null on failure. */
+  const handleSubmitBlend = async (input: BlendSubmitInput): Promise<BlendProcess | null> => {
+    // A merged blend can use the same lot more than once: add those together
+    const byLot = new Map<string, { lotId: string; bagsUsed: number; weightUsed: number }>();
+    for (const l of input.lots) {
+      if (!l.lotId) {
+        triggerToast(`Lot ${l.lotNumber} (${l.mark}) no longer exists, so this blend can't be saved as it is.`, "error");
+        return null;
       }
+      const id = String(l.lotId);
+      const prev = byLot.get(id) ?? { lotId: id, bagsUsed: 0, weightUsed: 0 };
+      prev.bagsUsed += l.bagsUsed === "-" ? 0 : Number(l.bagsUsed) || 0;
+      prev.weightUsed += Number(l.weightUsed) || 0;
+      byLot.set(id, prev);
+    }
+    const lots = Array.from(byLot.values());
+
+    if (input.editingBlendId) {
+      const id = input.editingBlendId;
+      const res = await runAction(
+        () => updateFactoryBlend({ blendId: id, blendName: input.blendName, lots }),
+        r => `Blend updated: ${r.blendName}.`
+      );
+      if (!res) return null;
+      return lastBlendsRef.current?.find(b => b.id === id) ?? null;
+    }
+
+    const res = await runAction(
+      () => createFactoryBlend({ blendName: input.blendName, batchNo: input.batchNo, date: input.date, lots }),
+      r => `Blend saved: ${r.blendName}. Sending to printer.`
+    );
+    if (!res) return null;
+    return lastBlendsRef.current?.find(b => b.id === res.blendId) ?? null;
+  };
+
+  const handleFinalizeBlend = (input: FinalizeInput) =>
+    runAction(
+      () =>
+        finalizeFactoryBlend({
+          blendId: input.blendId,
+          returnedLoose: input.returnedLoose,
+          returnLotId: "l-balance",
+          outputs: input.outputs
+        }),
+      res => `Blend finalized. Output ${Number(res.totalOutputQuantity ?? 0).toFixed(2)} kg added to packet stock.`
+    ).then(res => !!res);
+
+  const handleDeleteBlend = (blend: BlendProcess) => {
+    setDeleteModal({
+      title: "Delete Blend?",
+      message: `Delete "${blend.blendName}"? Its ${blend.totalQuantity.toFixed(2)} kg will be returned to the loose lots it came from.`,
+      confirmText: "Delete blend",
+      run: password => deleteFactoryBlend(blend.id, password),
+      successMessage: `Blend "${blend.blendName}" deleted and stock returned.`
     });
+  };
+
+  const handleDuplicateBlend = (blend: BlendProcess) =>
+    handleSubmitBlend({
+      editingBlendId: null,
+      blendName: blend.blendName,
+      batchNo: blend.batchNo,
+      date: new Date().toISOString().split("T")[0],
+      lots: blend.lotsUsed
+    }).then(saved => !!saved);
+
+  /** Merge blends under process (after confirmation). */
+  const handleMergeBlends = (blends: BlendProcess[]) => {
+      const total = blends.reduce((sum, b) => sum + b.totalQuantity, 0);
+      setConfirmModal({
+        title: `Merge ${blends.length} Blends?`,
+        message: `Combine ${blends.map(b => `"${b.blendName}"`).join(", ")} into one new blend of ${total.toFixed(2)} kg? Stock does not change. The merged blend gets a new serial number; the originals' numbers stay recorded as used.`,
+        onConfirm: () => {
+          runAction(
+            () => mergeFactoryBlends(blends.map(b => b.id)),
+            res => `Merged into ${res.blendName} (${Number(res.totalQuantity).toFixed(2)} kg).`
+          );
+        }
+      });
   };
 
   const handleRevertAndEditProcess = (blend: BlendProcess) => {
@@ -541,7 +460,10 @@ export default function FactoryDashboardClient({
     { id: "process", label: "Under Process", icon: Settings2, badge: underProcess.length },
     { id: "history", label: "History Ledger", icon: History },
     ...(userRole === "admin" || userRole === "manager"
-      ? [{ id: "missing_blends", label: "Gap Analysis", icon: AlertTriangle, badge: missingBlends.length }]
+      ? [
+          { id: "missing_blends", label: "Gap Analysis", icon: AlertTriangle, badge: missingBlends.length },
+          { id: "stock_take", label: "Stock Take", icon: AlertTriangle }
+        ]
       : [])
   ];
 
@@ -573,6 +495,16 @@ export default function FactoryDashboardClient({
         />
       )}
 
+      {/* Delete password dialog */}
+      <PasswordConfirmModal
+        isOpen={!!deleteModal}
+        title={deleteModal?.title || ""}
+        message={deleteModal?.message || ""}
+        confirmText={deleteModal?.confirmText}
+        onConfirm={confirmDelete}
+        onClose={() => setDeleteModal(null)}
+      />
+
       {/* Sticky Top Navbar Controlling Factory Navigation */}
       <div className="sticky top-0 z-30 pt-1 pb-3 -mt-1 bg-[#FAFBF8]/90 backdrop-blur-md print:hidden">
         <TopNavbar
@@ -596,20 +528,19 @@ export default function FactoryDashboardClient({
         {activeTab === "inventory" && (
           <InventoryModule
             looseInventory={looseInventory}
-            setLooseInventory={setLooseInventory}
             packetCatalog={packetCatalog}
-            setPacketCatalog={setPacketCatalog}
             historyList={historyList}
+            isBusy={isBusy}
+            onReceiveLooseLot={handleReceiveLooseLot}
             onDeleteLoose={handleDeleteLooseItem}
             onPurgeNilLoose={handlePurgeNilLooseStock}
-            isPurging={isPending}
+            isPurging={isBusy}
             onLedgerAdjustment={handleLedgerAdjustment}
             onEditLooseItem={handleEditLooseItem}
             onEditCatalogProduct={handleEditCatalogProduct}
             onDeleteCatalog={handleDeleteCatalogProduct}
             onReceivePacketStock={handleReceivePacketStock}
-            onReceiveLooseLot={handleReceiveLooseLot}
-            isCatalogUnlocked={userRole === "admin" || userRole === "manager"}
+            isCatalogUnlocked={canManage}
             onUnlockRequest={() => triggerToast("Role-based permissions are active.")}
             onLockRequest={() => { }}
             onAddCatalogProduct={handleAddCatalogProduct}
@@ -622,11 +553,8 @@ export default function FactoryDashboardClient({
         {activeTab === "blend" && (
           <BlendModule
             looseInventory={looseInventory}
-            setLooseInventory={setLooseInventory}
-            underProcess={underProcess}
-            setUnderProcess={setUnderProcess}
-            historyList={historyList}
-            setHistoryList={setHistoryList}
+            isBusy={isBusy}
+            onSubmitBlend={handleSubmitBlend}
             setActiveTab={setActiveTab}
             setPrintBlend={setPrintBlend}
             editingProcess={editingProcess}
@@ -634,27 +562,25 @@ export default function FactoryDashboardClient({
             triggerToast={triggerToast}
             systemUser={systemUser}
             logSystemAction={logSystemAction}
-            onCreateBlend={handleCreateBlend}
           />
         )}
 
         {activeTab === "process" && (
           <ProcessModule
             underProcess={underProcess}
-            setUnderProcess={setUnderProcess}
             packetCatalog={packetCatalog}
-            setPacketCatalog={setPacketCatalog}
             looseInventory={looseInventory}
-            setLooseInventory={setLooseInventory}
-            historyList={historyList}
-            setHistoryList={setHistoryList}
+            isBusy={isBusy}
+            canDelete={canManage}
+            onFinalizeBlend={handleFinalizeBlend}
+            onDeleteBlend={handleDeleteBlend}
+            onDuplicateBlend={handleDuplicateBlend}
+            onMergeBlends={handleMergeBlends}
             setPrintBlend={setPrintBlend}
             onRevertAndEdit={handleRevertAndEditProcess}
             triggerToast={triggerToast}
             systemUser={systemUser}
             logSystemAction={logSystemAction}
-            onFinalizeBlend={handleFinalizeBlend}
-            onDeleteBlend={handleDeleteBlendAction}
           />
         )}
 
@@ -674,12 +600,9 @@ export default function FactoryDashboardClient({
         {activeTab === "stock_take" && (
           <StockTakeModule
             looseInventory={looseInventory}
-            canManage={userRole === "admin" || userRole === "manager"}
+            canManage={canManage}
             triggerToast={triggerToast}
-            onApplied={async () => {
-              const freshLots = await fetchLooseLots();
-              setLooseInventory(freshLots);
-            }}
+            onApplied={reloadAll}
           />
         )}
       </div>

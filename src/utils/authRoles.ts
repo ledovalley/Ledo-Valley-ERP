@@ -1,21 +1,13 @@
 /**
- * Helper to securely resolve user role.
- * Priority: app_metadata.role (service-role managed, unalterable by client)
- * Fallback: user_metadata.role (for backwards compatibility during migration)
+ * Resolve a user's role securely.
+ * Only app_metadata.role is trusted: it can be changed only with the service-role
+ * key (server side). user_metadata can be edited by the user from the browser, so
+ * it is never used for permissions.
  */
 export function getUserRole(user: any): string {
-  if (!user) return 'employee';
-  
-  const appRole = user.app_metadata?.role;
-  if (appRole && typeof appRole === 'string' && appRole.trim()) {
-    return appRole.toLowerCase().trim();
+  const role = user?.app_metadata?.role;
+  if (typeof role === 'string' && role.trim()) {
+    return role.toLowerCase().trim();
   }
-  
-  const metaRole = user.user_metadata?.role;
-  if (metaRole && typeof metaRole === 'string' && metaRole.trim()) {
-    return metaRole.toLowerCase().trim();
-  }
-  
   return 'employee';
 }
-

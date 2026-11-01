@@ -11,7 +11,7 @@ export default async function LedgerPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
-  const role = user?.user_metadata?.role || 'staff';
+  const role = user?.app_metadata?.role || 'staff';
   const userId = user?.id || '';
   const userName = user?.user_metadata?.name || user?.email?.split('@')[0] || 'Team Member';
 
@@ -22,7 +22,7 @@ export default async function LedgerPage() {
   let usersList: any[] = [];
   if (role === 'admin' || role === 'manager') {
     try {
-      const { data: usersData } = await supabaseAdmin.auth.admin.listUsers();
+      const { data: usersData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
       usersList = usersData?.users || [];
     } catch (e) {
       // fallback

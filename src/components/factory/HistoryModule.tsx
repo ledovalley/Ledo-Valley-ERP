@@ -4,6 +4,30 @@ import { HistoryRecord, SystemUser } from '@/types/factory';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
+// Finalized blends: 'Finalized Process' is the old (Firebase-era) name,
+// 'BLEND_PACKED' is what the database records now.
+const FINALIZED_TYPES = ['Finalized Process', 'BLEND_PACKED'];
+const isFinalizedType = (type: string) => FINALIZED_TYPES.includes(type);
+const BLEND_EVENT_TYPES = [...FINALIZED_TYPES, 'BLEND_INITIATED', 'BLEND_UPDATED', 'BLEND_MERGED', 'BLEND_DELETED'];
+
+/** Serial numbers of the blends that were merged into this one (e.g. ["SL-01", "SL-02"]) */
+function mergedSerialsOf(details: any): string[] {
+  if (!details) return [];
+  if (Array.isArray(details.mergedSerials) && details.mergedSerials.length > 0) {
+    return details.mergedSerials.map(String);
+  }
+  if (Array.isArray(details.mergedBlends)) {
+    return details.mergedBlends
+      .map((b: any) => {
+        if (b?.serialNo) return `SL-${String(b.serialNo).padStart(2, '0')}`;
+        const m = String(b?.blendName || '').match(/\|\s*SL-(\d+)\s*$/);
+        return m ? `SL-${m[1]}` : null;
+      })
+      .filter(Boolean);
+  }
+  return [];
+}
+
 interface HistoryModuleProps {
   historyList: HistoryRecord[];
   systemUser: SystemUser;
@@ -42,6 +66,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
           (details?.blendName || '').toLowerCase().includes(lower) ||
           (details?.date || '').includes(lower) ||
           (details?.completedDate || '').includes(lower) ||
+          mergedSerialsOf(details).some(sl => sl.toLowerCase().includes(lower)) ||
           h.id.toLowerCase().includes(lower) ||
           h.desc.toLowerCase().includes(lower) ||
           h.type.toLowerCase().includes(lower);
@@ -59,7 +84,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
     let maxDate = '';
 
     filteredHistory.forEach(h => {
-      if (h.type === 'Finalized Process' && h.details) {
+      if (isFinalizedType(h.type) && h.details) {
         totalYields += h.details.totalOutputQuantity || 0;
 
         const inputQty = h.details.totalQuantity || 0;
@@ -237,10 +262,21 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
 
                 <div className="bg-[#0B172B] text-white p-4 rounded-xl w-3/4 text-center relative shadow-[0_10px_20px_rgba(11,23,43,0.15)]">
                   <h4 className="font-bold text-lg leading-tight">{traceModalData.details.blendName}</h4>
-                  <div className="text-xs text-[#F0F5F9]/70 mt-1">Processed: {traceModalData.details.completedDate}</div>
-                  <div className="absolute -right-3 -top-3 bg-rose-500 text-white text-[10px] font-bold px-2 py-1 rounded-full shadow border-2 border-white" title="Process Loss/Variance">
-                    {((traceModalData.details.totalQuantity - (traceModalData.details.totalOutputQuantity || 0)).toFixed(2))} kg Loss
+                  {mergedSerialsOf(traceModalData.details).length > 0 && (
+                    <div className="text-xs text-purple-200 mt-1 font-semibold">
+                      Merged from: {mergedSerialsOf(traceModalData.details).join(', ')}
+                    </div>
+                  )}
+                  <div className="text-xs text-[#F0F5F9]/70 mt-1">
+                    {traceModalData.details.completedDate
+                      ? `Processed: ${traceModalData.details.completedDate}`
+                      : 'Not packed yet'}
                   </div>
+                  {isFinalizedType(traceModalData.type) && (
+                    <div className="absolute -right-3 -top-3 bg-rose-500 text-white text-[10px] font-bold px-2 py-1 rounded-full shadow border-2 border-white" title="Process Loss/Variance">
+                      {(((traceModalData.details.totalQuantity || 0) - (traceModalData.details.totalOutputQuantity || 0)).toFixed(2))} kg Loss
+                    </div>
+                  )}
                 </div>
 
                 <ArrowDown size={24} className="text-[#0B172B]/20" />
@@ -336,7 +372,8 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
               ) : (
                 filteredHistory.map(record => {
                   const details = record.details || {};
-                  const isBlendEvent = ['Finalized Process', 'BLEND_INITIATED', 'BLEND_UPDATED'].includes(record.type);
+                  const isBlendEvent = BLEND_EVENT_TYPES.includes(record.type);
+                  const mergedFrom = mergedSerialsOf(details);
                   const isLedgerAdjustment = record.type === 'LEDGER_ADJUSTMENT';
                   const processVariance = details.totalQuantity !== undefined ? details.totalQuantity - (details.totalOutputQuantity || 0) : 0;
 
@@ -349,19 +386,28 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                           <div className="font-bold text-[#0B172B]">{details.blendName || record.desc || 'System Event'}</div>
                         )}
                         <div className="text-xs text-[#0B172B]/40 font-mono mt-0.5">ID: {record.id}</div>
+                        {mergedFrom.length > 0 && (
+                          <div className="text-[11px] mt-1 font-semibold text-purple-700">
+                            Merged from: {mergedFrom.join(', ')}
+                          </div>
+                        )}
                         {details.batchNo && (
                           <div className="text-[10px] inline-block bg-[#F0F5F9] text-[#0B172B]/55 px-1.5 py-0.5 rounded mt-1 font-mono font-bold uppercase border border-[#0B172B]/10">
                             Batch: {details.batchNo}
                           </div>
                         )}
                         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                          <span className={`text-[10px] border px-2 py-0.5 rounded font-bold uppercase ${record.type === 'Finalized Process'
+                          <span className={`text-[10px] border px-2 py-0.5 rounded font-bold uppercase ${isFinalizedType(record.type)
                             ? 'bg-[#009965]/10 text-[#009965] border-[#009965]/20'
                             : record.type === 'BLEND_INITIATED'
                               ? 'bg-blue-50 text-blue-700 border-blue-200'
                               : record.type === 'BLEND_UPDATED'
                                 ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                : 'bg-slate-100 text-slate-700 border-slate-200'
+                                : record.type === 'BLEND_MERGED'
+                                  ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                  : record.type === 'BLEND_DELETED'
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                    : 'bg-slate-100 text-slate-700 border-slate-200'
                             }`}>
                             {record.type}
                           </span>
@@ -449,11 +495,15 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                               </span>
                             </div>
                           </div>
-                        ) : record.type === 'Finalized Process' ? (
+                        ) : isFinalizedType(record.type) ? (
                           <span className="text-xs text-[#0B172B]/40 italic">Packout yield recorded in summary.</span>
                         ) : (
                           <span className="text-xs text-[#0B172B]/40 italic">
-                            {record.type === 'BLEND_INITIATED' ? 'In-process (Awaiting packout)' : 'N/A'}
+                            {['BLEND_INITIATED', 'BLEND_UPDATED', 'BLEND_MERGED'].includes(record.type)
+                              ? 'In-process (Awaiting packout)'
+                              : record.type === 'BLEND_DELETED'
+                                ? 'Deleted, stock returned'
+                                : 'N/A'}
                           </span>
                         )}
                       </td>

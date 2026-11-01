@@ -9,7 +9,7 @@ export default async function UsersPage() {
   await connection();
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  const currentUserRole = user?.user_metadata?.role || "employee";
+  const currentUserRole = user?.app_metadata?.role || "employee";
 
   // Prevent non-admins from viewing User Management
   if (currentUserRole !== 'admin') {

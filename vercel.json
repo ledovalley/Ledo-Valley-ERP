@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron/backup",
+      "schedule": "30 20 * * *"
+    }
+  ],
+  "functions": {
+    "src/app/api/cron/backup/route.ts": { "maxDuration": 300 },
+    "src/app/api/backup/download/route.ts": { "maxDuration": 300 }
+  }
+}

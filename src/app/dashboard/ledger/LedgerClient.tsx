@@ -93,7 +93,7 @@ export default function LedgerClient({
         found.user_metadata?.full_name ||
         found.email?.split('@')[0] ||
         'Staff Member';
-      const role = found.user_metadata?.role || 'staff';
+      const role = found.app_metadata?.role || 'staff';
       const monogram = name.slice(0, 2).toUpperCase();
       return {
         name,
@@ -184,7 +184,7 @@ export default function LedgerClient({
     const q = repSearchQuery.toLowerCase();
     return usersList.filter((u: any) => {
       const name = u.user_metadata?.name || u.user_metadata?.full_name || u.email || '';
-      const role = u.user_metadata?.role || '';
+      const role = u.app_metadata?.role || '';
       return name.toLowerCase().includes(q) || role.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q);
     });
   }, [usersList, repSearchQuery]);
@@ -580,7 +580,7 @@ export default function LedgerClient({
                     </div>
                     {matchingUsers.map((u: any) => {
                       const name = u.user_metadata?.name || u.user_metadata?.full_name || u.email?.split('@')[0];
-                      const role = u.user_metadata?.role || 'staff';
+                      const role = u.app_metadata?.role || 'staff';
                       const initials = name.slice(0, 2).toUpperCase();
 
                       return (
@@ -828,7 +828,7 @@ export default function LedgerClient({
                   {selectedUserProfile.user_metadata?.name || 'Staff Member'}
                 </h3>
                 <span className="px-2.5 py-0.5 rounded-full bg-white/20 text-white text-[11px] font-semibold uppercase tracking-wider">
-                  {selectedUserProfile.user_metadata?.role || 'staff'}
+                  {selectedUserProfile.app_metadata?.role || 'staff'}
                 </span>
               </div>
               <p className="text-xs text-emerald-200/80 mt-0.5">{selectedUserProfile.email}</p>
@@ -839,18 +839,18 @@ export default function LedgerClient({
             <div>
               <span className="text-[10px] text-emerald-200 uppercase font-semibold">Wage Structure</span>
               <p className="text-sm font-bold text-white mt-0.5">
-                {selectedUserProfile.user_metadata?.employment_type?.replace('_', ' ').toUpperCase() || 'MONTHLY SALARY'}
+                {selectedUserProfile.app_metadata?.employment_type?.replace('_', ' ').toUpperCase() || 'MONTHLY SALARY'}
               </p>
               <p className="text-xs font-mono text-[#E4B84D] font-bold">
-                ₹{Number(selectedUserProfile.user_metadata?.base_rate || 0).toLocaleString('en-IN')} base
+                ₹{Number(selectedUserProfile.app_metadata?.base_rate || 0).toLocaleString('en-IN')} base
               </p>
             </div>
 
             <div>
               <span className="text-[10px] text-emerald-200 uppercase font-semibold">Entitled Allowances</span>
               <div className="flex flex-wrap gap-1.5 mt-1">
-                {(selectedUserProfile.user_metadata?.allowances || []).length > 0 ? (
-                  (selectedUserProfile.user_metadata?.allowances || []).map((a: any, idx: number) => {
+                {(selectedUserProfile.app_metadata?.allowances || []).length > 0 ? (
+                  (selectedUserProfile.app_metadata?.allowances || []).map((a: any, idx: number) => {
                     const aId = typeof a === 'object' && a !== null ? a.id : a;
                     const aRate = typeof a === 'object' && a !== null && a.rate ? a.rate : null;
                     const isBike = aId === 'bike_allowance';
@@ -883,7 +883,7 @@ export default function LedgerClient({
           <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
             <span>{filteredShifts.length} logged shifts</span>
             {(() => {
-              const bikeAllowance = (selectedUserProfile?.user_metadata?.allowances || []).find(
+              const bikeAllowance = (selectedUserProfile?.app_metadata?.allowances || []).find(
                 (a: any) => (typeof a === 'object' && a !== null ? a.id : a) === 'bike_allowance'
               );
               const bikeRate = bikeAllowance && typeof bikeAllowance === 'object' ? Number(bikeAllowance.rate) || 0 : 0;

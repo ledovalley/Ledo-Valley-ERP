@@ -111,7 +111,7 @@ export default function SalesClient({
     const found = (usersList || []).find((u: any) => u.id === userId);
     if (found) {
       const name = found.user_metadata?.name || found.user_metadata?.full_name || found.email?.split('@')[0] || 'Staff Member';
-      const role = found.user_metadata?.role || 'Sales';
+      const role = found.app_metadata?.role || 'Sales';
       const monogram = name.slice(0, 2).toUpperCase();
       return {
         name,
@@ -539,6 +539,7 @@ export default function SalesClient({
       if (res?.error) {
         setError(res.error);
       } else {
+        if (res && 'warning' in res && res.warning) alert(res.warning);
         setIsSalesModalOpen(false);
         setSAmount('');
         setSRetailerId('');

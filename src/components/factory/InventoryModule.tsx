@@ -1,31 +1,24 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Warehouse, Plus, Trash2, Edit2, Search, Filter, Shield, Lock, Unlock, Eye, EyeOff, Check, Download, PackagePlus, Clock, X, Boxes, FileText, File } from 'lucide-react';
 import { LooseLot, CatalogProduct, HistoryRecord } from '@/types/factory';
+import { fetchLotUsage, type LotUsageRow, type LotReconciliation } from '@/app/factory/actions';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 interface InventoryModuleProps {
   looseInventory: LooseLot[];
-  setLooseInventory: (val: LooseLot[] | ((prev: LooseLot[]) => LooseLot[])) => void;
   packetCatalog: CatalogProduct[];
-  setPacketCatalog: (val: CatalogProduct[] | ((prev: CatalogProduct[]) => CatalogProduct[])) => void;
+  /** true while any save is in progress */
+  isBusy?: boolean;
+  /** Saves a newly received lot to the database; resolves to true only if it saved. */
+  onReceiveLooseLot: (lot: Omit<LooseLot, 'id' | 'weight'>) => Promise<boolean>;
   onDeleteLoose: (id: string) => void;
   onPurgeNilLoose: () => void;
   isPurging?: boolean;
   onEditLooseItem: (id: string, data: Partial<LooseLot>) => void;
   onEditCatalogProduct: (id: string, data: Partial<CatalogProduct>) => void;
   onDeleteCatalog: (id: string) => void;
-  onReceivePacketStock?: (productId: string, quantity: number, date: string) => void;
-  onReceiveLooseLot?: (lotData: {
-    lotNumber: string;
-    grade: string;
-    mark: string;
-    bags: number;
-    weightPerBag: number;
-    weight: number;
-    date: string;
-    labels: string[];
-  }) => void;
+  onReceivePacketStock: (productId: string, quantity: number, date: string) => Promise<boolean>;
   isCatalogUnlocked: boolean;
   onUnlockRequest: () => void;
   onLockRequest: () => void;
@@ -34,14 +27,14 @@ interface InventoryModuleProps {
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
   systemUser: any;
   historyList: HistoryRecord[];
-  logSystemAction: (action: string, details: string, isError?: boolean) => void;
+  logSystemAction?: (action: string, details: string, isError?: boolean) => void;
 }
 
 export default function InventoryModule({ 
   looseInventory, 
-  setLooseInventory,
   packetCatalog, 
-  setPacketCatalog,
+  isBusy = false,
+  onReceiveLooseLot,
   onDeleteLoose, 
   onPurgeNilLoose,
   isPurging = false,
@@ -49,7 +42,6 @@ export default function InventoryModule({
   onEditCatalogProduct,
   onDeleteCatalog, 
   onReceivePacketStock,
-  onReceiveLooseLot,
   isCatalogUnlocked,
   onUnlockRequest,
   onLockRequest,
@@ -57,12 +49,33 @@ export default function InventoryModule({
   onLedgerAdjustment,
   triggerToast,
   systemUser,
-  historyList,
-  logSystemAction
+  historyList
 }: InventoryModuleProps) {
   const [activeTab, setActiveTab] = useState<'loose' | 'packet'>('loose');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLotForAudit, setSelectedLotForAudit] = useState<{ type: 'loose' | 'catalog', item: LooseLot | CatalogProduct } | null>(null);
+  // "Used in blends" for the lot open in the audit panel, loaded from the database
+  const [lotUsage, setLotUsage] = useState<{
+    loading: boolean; rows: LotUsageRow[]; reconciliation: LotReconciliation | null; error: string | null;
+  }>({ loading: false, rows: [], reconciliation: null, error: null });
+
+  const auditLotId = selectedLotForAudit?.type === 'loose' ? selectedLotForAudit.item.id : null;
+
+  useEffect(() => {
+    if (!auditLotId) return;
+    let cancelled = false;
+    setLotUsage({ loading: true, rows: [], reconciliation: null, error: null });
+    fetchLotUsage(auditLotId)
+      .then(res => {
+        if (cancelled) return;
+        if ('error' in res) setLotUsage({ loading: false, rows: [], reconciliation: null, error: res.error });
+        else setLotUsage({ loading: false, rows: res.rows, reconciliation: res.reconciliation, error: null });
+      })
+      .catch(err => {
+        if (!cancelled) setLotUsage({ loading: false, rows: [], reconciliation: null, error: err instanceof Error ? err.message : 'Could not load blend usage.' });
+      });
+    return () => { cancelled = true; };
+  }, [auditLotId]);
   const [looseSortBy, setLooseSortBy] = useState('default');
 
   // Multi-attribute filters for Loose Tea Stock
@@ -107,66 +120,42 @@ export default function InventoryModule({
     return qty * selectedProductDetail.size;
   }, [packetForm.quantity, selectedProductDetail]);
 
-  const handleLooseSubmit = (e: React.FormEvent) => {
+  const handleLooseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isBusy) return;
     const bags = parseInt(looseForm.bags);
     const perBag = parseFloat(looseForm.weightPerBag);
+    if (!Number.isInteger(bags) || bags <= 0) return triggerToast('Bags must be a whole number greater than 0.', 'error');
+    if (!perBag || isNaN(perBag) || perBag <= 0) return triggerToast('Weight per bag must be greater than 0.', 'error');
     const labelsList = looseForm.labels.split(',').map(l => l.trim()).filter(l => l);
 
-    if (onReceiveLooseLot) {
-      onReceiveLooseLot({
-        lotNumber: looseForm.lotNumber,
-        grade: looseForm.grade,
-        mark: looseForm.mark,
-        bags,
-        weightPerBag: perBag,
-        weight: calculatedLooseTotalWeight,
-        date: looseForm.date,
-        labels: labelsList
-      });
-    } else {
-      const newLot: LooseLot = {
-        id: Date.now().toString(),
-        lotNumber: looseForm.lotNumber,
-        grade: looseForm.grade,
-        mark: looseForm.mark,
-        bags,
-        weightPerBag: perBag,
-        weight: calculatedLooseTotalWeight,
-        date: looseForm.date,
-        labels: labelsList
-      };
+    // Saved on the server; the list reloads from the database afterwards
+    const saved = await onReceiveLooseLot({
+      lotNumber: looseForm.lotNumber.trim(),
+      grade: looseForm.grade.trim(),
+      mark: looseForm.mark.trim(),
+      bags,
+      weightPerBag: perBag,
+      date: looseForm.date,
+      labels: labelsList
+    });
 
-      setLooseInventory(prev => [...prev, newLot]);
-      logSystemAction('CREATE_LOOSE', `Received loose tea lot: ${newLot.lotNumber} (${newLot.mark}) - ${newLot.weight}kg`);
-      triggerToast('Raw loose tea lot received and entered in stock ledger!');
-    }
-
+    // Keep the form filled in if it didn't save, so nothing has to be re-typed
+    if (!saved) return;
     setLooseForm({ lotNumber: '', grade: '', mark: '', bags: '', weightPerBag: '', date: new Date().toISOString().split('T')[0], labels: '' });
     setShowReceiveLoose(false);
   };
 
-  const handlePacketSubmit = (e: React.FormEvent) => {
+  const handlePacketSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isBusy) return;
     if (!packetForm.productId) return triggerToast("Please select a packet product master item", "error");
     const qtyToAdd = parseFloat(packetForm.quantity);
     if (!qtyToAdd || isNaN(qtyToAdd) || qtyToAdd <= 0) return triggerToast("Please enter a valid quantity", "error");
 
-    if (onReceivePacketStock) {
-      onReceivePacketStock(packetForm.productId, qtyToAdd, packetForm.date);
-    } else {
-      setPacketCatalog(prev => prev.map(p => {
-        if (p.id === packetForm.productId) {
-          return { ...p, stock: p.stock + qtyToAdd };
-        }
-        return p;
-      }));
-    }
+    const saved = await onReceivePacketStock(packetForm.productId, qtyToAdd, packetForm.date);
+    if (!saved) return;
 
-    if (selectedProductDetail) {
-      logSystemAction('ADD_STOCK', `Added ${qtyToAdd} ${selectedProductDetail.unit}(s) to product: ${selectedProductDetail.name}`);
-      triggerToast(`Received ${qtyToAdd} ${selectedProductDetail.unit}(s) of "${selectedProductDetail.name}" successfully!`);
-    }
     setPacketForm({ productId: '', quantity: '', date: new Date().toISOString().split('T')[0] });
     setShowReceivePacket(false);
   };
@@ -211,14 +200,75 @@ export default function InventoryModule({
     setEditLotData({});
   };
 
-  const saveEditing = () => {
+  const [isCheckingEdit, setIsCheckingEdit] = useState(false);
+
+  const saveEditing = async () => {
     if (!editLotData.lotNumber || !editLotData.mark || !editLotData.grade) {
       triggerToast("Lot Number, Mark, and Grade cannot be empty.", "error");
       return;
     }
-    if (editingLotId) {
-      onEditLooseItem(editingLotId, editLotData);
+    if (!editingLotId) return;
+    const lot = looseInventory.find(l => l.id === editingLotId);
+
+    const newBags = editLotData.bags ?? lot?.bags ?? 0;
+    const newRate = editLotData.weightPerBag ?? lot?.weightPerBag ?? 0;
+    const stockChanging = !!lot && (newBags !== lot.bags || newRate !== lot.weightPerBag);
+
+    if (lot && stockChanging) {
+      // Look up how this lot has been used so the warning is specific
+      setIsCheckingEdit(true);
+      let usage: LotUsageRow[] = [];
+      let usageKnown = true;
+      try {
+        const res = await fetchLotUsage(lot.id);
+        if ('error' in res) usageKnown = false; else usage = res.rows;
+      } catch {
+        usageKnown = false;
+      } finally {
+        setIsCheckingEdit(false);
+      }
+
+      const newWeight = newBags * newRate;
+      const diff = newWeight - lot.weight;
+      const fmt = (n: number) => n.toFixed(2);
+      const lines: string[] = [];
+
+      lines.push(`Stock correction for lot ${lot.lotNumber} (${lot.mark}):`);
+      lines.push(`  ${lot.bags} bags x ${lot.weightPerBag} kg = ${fmt(lot.weight)} kg  ->  ${newBags} bags x ${newRate} kg = ${fmt(newWeight)} kg`);
+      lines.push(`  Change: ${diff >= 0 ? '+' : ''}${fmt(diff)} kg`);
+
+      if (Math.abs(lot.weight - lot.bags * lot.weightPerBag) > 0.001) {
+        lines.push('');
+        lines.push(`Note: the lot currently holds ${fmt(lot.weight)} kg, which is not exactly ${lot.bags} x ${lot.weightPerBag} kg. Saving replaces it with ${fmt(newWeight)} kg.`);
+      }
+
+      const usedBags = usage.reduce((sum, u) => sum + u.bagsUsed, 0);
+      if (usage.length > 0) {
+        const usedKg = usage.reduce((sum, u) => sum + u.weightUsed, 0);
+        lines.push('');
+        lines.push(`${usedBags} bag(s) / ${fmt(usedKg)} kg of this lot were already used in ${usage.length} blend(s). Those blends keep the weights they were booked with; only the bags still in stock are re-weighed.`);
+      }
+
+      const pending = usage.filter(u => u.status === 'PENDING');
+      if (pending.length > 0 && newRate !== lot.weightPerBag) {
+        lines.push('');
+        lines.push('WARNING: still under process:');
+        pending.forEach(p => lines.push(`  - ${p.blendName}: ${p.bagsUsed} bag(s) booked at ${fmt(p.weightUsed)} kg`));
+        lines.push(`If any of these is later deleted or edited, its bags come back at the weight they were booked with, not ${newRate} kg/bag. The lot's weight will then no longer equal bags x weight per bag.`);
+      }
+
+      if (!usageKnown) {
+        lines.push('');
+        lines.push('(Could not check which blends used this lot.)');
+      }
+
+      lines.push('');
+      lines.push('This will be recorded in History as a stock correction. Save?');
+
+      if (!window.confirm(lines.join('\n'))) return;
     }
+
+    onEditLooseItem(editingLotId, editLotData);
     setEditingLotId(null);
     setEditLotData({});
   };
@@ -286,7 +336,8 @@ export default function InventoryModule({
   // Count of NIL stock lots eligible for purge
   const nilCount = useMemo(() => {
     const systemIds = ["l-balance", "l-orthodox", "l-cardamom", "l-cardamom-husk"];
-    return looseInventory.filter(item => !systemIds.includes(item.id) && (Number(item.bags) <= 0 || Number(item.weight) <= 0)).length;
+    // Same rule as the server: only lots with no weight left are purged
+    return looseInventory.filter(item => !systemIds.includes(item.id) && Number(item.weight) <= 0).length;
   }, [looseInventory]);
 
   // Unique filter options extracted dynamically from inventory
@@ -883,10 +934,10 @@ export default function InventoryModule({
                 <button 
                   type="submit" 
                   form="receiveLooseForm"
-                  disabled={!looseForm.lotNumber || !looseForm.mark || !looseForm.grade || !looseForm.bags || !looseForm.weightPerBag}
+                  disabled={isBusy || !looseForm.lotNumber || !looseForm.mark || !looseForm.grade || !looseForm.bags || !looseForm.weightPerBag}
                   className="px-6 py-3 bg-[#009965] hover:bg-[#004825] disabled:bg-[#0B172B]/20 disabled:cursor-not-allowed text-white rounded-xl text-sm font-bold transition-colors shadow-[0_5px_15px_rgba(0,153,101,0.2)] flex items-center gap-2"
                 >
-                  <Check size={16} /> Register Incoming Loose Stock
+                  <Check size={16} /> {isBusy ? 'Saving…' : 'Register Incoming Loose Stock'}
                 </button>
               </div>
             </div>
@@ -967,10 +1018,10 @@ export default function InventoryModule({
                 <button 
                   type="submit" 
                   form="receivePacketForm"
-                  disabled={!packetForm.productId || !packetForm.quantity}
+                  disabled={isBusy || !packetForm.productId || !packetForm.quantity}
                   className="px-6 py-3 bg-[#009965] hover:bg-[#004825] disabled:bg-[#0B172B]/20 disabled:cursor-not-allowed text-white rounded-xl text-sm font-bold transition-colors shadow-[0_5px_15px_rgba(0,153,101,0.2)] flex items-center gap-2"
                 >
-                  <Check size={16} /> Update Inventory Ledger
+                  <Check size={16} /> {isBusy ? 'Saving…' : 'Update Inventory Ledger'}
                 </button>
               </div>
             </div>
@@ -1058,7 +1109,7 @@ export default function InventoryModule({
                                 >
                                   <Edit2 size={14} />
                                 </button>
-                                {item.bags === 0 || item.weight <= 0 ? (
+                                {item.weight <= 0 ? (
                                   <button 
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -1230,7 +1281,7 @@ export default function InventoryModule({
               </div>
               <div className="flex justify-end gap-3 pt-4 border-t border-[#0B172B]/8">
                 <button onClick={cancelEditing} className="px-5 py-2.5 rounded-xl border border-[#0B172B]/10 text-[#0B172B]/70 hover:bg-[#F0F5F9] font-bold text-sm transition-all">Cancel</button>
-                <button onClick={saveEditing} className="px-5 py-2.5 rounded-xl bg-[#0B172B] hover:bg-[#009965] text-white font-bold text-sm transition-all shadow-md">Save Changes</button>
+                <button onClick={saveEditing} disabled={isCheckingEdit || isBusy} className="disabled:opacity-60 disabled:cursor-not-allowed px-5 py-2.5 rounded-xl bg-[#0B172B] hover:bg-[#009965] text-white font-bold text-sm transition-all shadow-md">{isCheckingEdit ? 'Checking…' : 'Save Changes'}</button>
               </div>
             </div>
           </div>
@@ -1415,8 +1466,158 @@ export default function InventoryModule({
                 </div>
               </div>
 
+              {selectedLotForAudit.type === 'loose' && (
+                <div className="mb-8">
+                  <h4 className="font-bold text-[#0B172B] mb-3 flex items-center gap-2">
+                    <Boxes size={16} className="text-[#009965]" /> Used in Blends
+                  </h4>
+                  {lotUsage.loading ? (
+                    <div className="text-sm text-[#0B172B]/50 italic py-3">Loading blend usage…</div>
+                  ) : lotUsage.error ? (
+                    <div className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-4 py-3">
+                      Could not load blend usage: {lotUsage.error}
+                    </div>
+                  ) : lotUsage.rows.length === 0 ? (
+                    <div className="text-sm text-[#0B172B]/40 italic py-3">This lot has not been used in any blend.</div>
+                  ) : (
+                    <div className="overflow-x-auto border border-[#0B172B]/8 rounded-xl">
+                      <table className="w-full min-w-[560px] text-left text-xs">
+                        <thead className="bg-[#F0F5F9]">
+                          <tr>
+                            <th className="p-3 font-bold text-[#0B172B]/55 uppercase tracking-wider">Blend</th>
+                            <th className="p-3 font-bold text-[#0B172B]/55 uppercase tracking-wider">Status</th>
+                            <th className="p-3 font-bold text-[#0B172B]/55 uppercase tracking-wider">Date</th>
+                            <th className="p-3 font-bold text-[#0B172B]/55 uppercase tracking-wider text-right">Bags</th>
+                            <th className="p-3 font-bold text-[#0B172B]/55 uppercase tracking-wider text-right">Kg</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#0B172B]/5">
+                          {lotUsage.rows.map(u => (
+                            <tr key={u.blendId} className="hover:bg-[#F0F5F9]/40">
+                              <td className="p-3">
+                                <div className="font-bold text-[#0B172B] text-sm">{u.blendName}</div>
+                                {u.batchNo && <div className="text-[10px] font-mono text-[#0B172B]/45 mt-0.5">Batch: {u.batchNo}</div>}
+                              </td>
+                              <td className="p-3">
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase ${u.status === 'PACKED'
+                                  ? 'bg-[#009965]/10 text-[#009965] border-[#009965]/20'
+                                  : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                                  {u.status === 'PACKED' ? 'Packed' : u.status === 'PENDING' ? 'Under process' : u.status}
+                                </span>
+                              </td>
+                              <td className="p-3 font-mono text-[#0B172B]/70">
+                                <div>{u.date}</div>
+                                {u.packedAt && <div className="text-[10px] text-[#009965] mt-0.5">Packed {u.packedAt.split('T')[0]}</div>}
+                              </td>
+                              <td className="p-3 text-right font-mono font-semibold text-[#0B172B]">
+                                {selectedLotForAudit.item.id.startsWith('l-') ? '-' : u.bagsUsed}
+                              </td>
+                              <td className="p-3 text-right font-mono font-bold text-[#0B172B]">{u.weightUsed.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot className="bg-[#FFFEE2]/50 border-t border-[#0B172B]/10">
+                          <tr>
+                            <td className="p-3 font-bold text-[#004825] uppercase tracking-wider" colSpan={3}>
+                              Total used ({lotUsage.rows.length} blend{lotUsage.rows.length === 1 ? '' : 's'})
+                            </td>
+                            <td className="p-3 text-right font-mono font-bold text-[#004825]">
+                              {selectedLotForAudit.item.id.startsWith('l-') ? '-' : lotUsage.rows.reduce((sum, u) => sum + u.bagsUsed, 0)}
+                            </td>
+                            <td className="p-3 text-right font-mono font-bold text-[#004825]">
+                              {lotUsage.rows.reduce((sum, u) => sum + u.weightUsed, 0).toFixed(2)}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-[#0B172B]/45 mt-2">
+                    Blends that were deleted are not listed, because their stock was returned to this lot. A merged blend appears once, under its merged name.
+                  </p>
+
+                  {!lotUsage.loading && !lotUsage.error && lotUsage.reconciliation && (() => {
+                    const rc = lotUsage.reconciliation;
+                    const current = (selectedLotForAudit.item as LooseLot).weight;
+                    const fmt = (n: number) => `${n < 0 ? '-' : ''}${Math.abs(n).toFixed(2)} kg`;
+                    const signed = (n: number) => `${n >= 0 ? '+' : '-'} ${Math.abs(n).toFixed(2)} kg`;
+                    // With a receipt record we can check the books; without one we work the opening figure out.
+                    const opening = rc.receivedKg ?? (current + rc.usedKg - rc.correctionsKg - rc.returnsKg);
+                    const expected = opening + rc.correctionsKg + rc.returnsKg - rc.usedKg;
+                    const unexplained = rc.receivedKg === null ? 0 : current - expected;
+                    const balanced = Math.abs(unexplained) < 0.005;
+
+                    return (
+                      <div className="mt-5 border border-[#0B172B]/8 rounded-xl overflow-hidden">
+                        <div className="bg-[#F0F5F9] px-4 py-2.5 font-bold text-xs text-[#0B172B] uppercase tracking-wider">
+                          Stock Reconciliation
+                        </div>
+                        <div className="p-4 text-sm font-mono space-y-1.5">
+                          <div className="flex justify-between">
+                            <span className="text-[#0B172B]/70 font-sans">
+                              {rc.receivedKg !== null
+                                ? `Received${rc.receivedAt ? ` (${rc.receivedAt.split('T')[0]})` : ''}`
+                                : 'Opening stock (no receipt record, worked out)'}
+                            </span>
+                            <span className="font-semibold text-[#0B172B]">{fmt(opening)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[#0B172B]/70 font-sans">Corrections ({rc.corrections.length})</span>
+                            <span className={`font-semibold ${rc.correctionsKg === 0 ? 'text-[#0B172B]' : rc.correctionsKg > 0 ? 'text-[#009965]' : 'text-rose-600'}`}>{signed(rc.correctionsKg)}</span>
+                          </div>
+                          {rc.returnsKg > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-[#0B172B]/70 font-sans">Loose tea returned from finalized blends</span>
+                              <span className="font-semibold text-[#009965]">{signed(rc.returnsKg)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between">
+                            <span className="text-[#0B172B]/70 font-sans">Used in blends</span>
+                            <span className="font-semibold text-[#0B172B]">{signed(-rc.usedKg)}</span>
+                          </div>
+                          <div className="flex justify-between border-t border-[#0B172B]/10 pt-1.5">
+                            <span className="text-[#0B172B] font-sans font-bold">Expected stock</span>
+                            <span className="font-bold text-[#0B172B]">{fmt(expected)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[#0B172B] font-sans font-bold">Current stock</span>
+                            <span className="font-bold text-[#0B172B]">{fmt(current)}</span>
+                          </div>
+                          {rc.receivedKg !== null && (
+                            balanced ? (
+                              <div className="text-xs font-sans font-bold text-[#009965] pt-1">✓ Balanced</div>
+                            ) : (
+                              <div className="text-xs font-sans font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mt-1">
+                                Unexplained difference: {signed(unexplained)}. Stock changed in a way that wasn't recorded here (for example an edit made before these records were kept, or a change made directly in the database).
+                              </div>
+                            )
+                          )}
+                        </div>
+
+                        {rc.corrections.length > 0 && (
+                          <div className="border-t border-[#0B172B]/8 px-4 py-3 space-y-2">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-[#0B172B]/50">Corrections</div>
+                            {rc.corrections.map((c, i) => (
+                              <div key={i} className="flex justify-between gap-3 text-xs">
+                                <div>
+                                  <div className="text-[#0B172B]">{c.description}</div>
+                                  <div className="text-[#0B172B]/45 mt-0.5">
+                                    {new Date(c.date).toLocaleString()}{c.userName ? ` • ${c.userName}` : ''}
+                                  </div>
+                                </div>
+                                <span className={`font-mono font-bold shrink-0 ${c.deltaKg > 0 ? 'text-[#009965]' : 'text-rose-600'}`}>{signed(c.deltaKg)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
               <h4 className="font-bold text-[#0B172B] mb-4 flex items-center gap-2">
-                <Clock size={16} className="text-[#009965]" /> History & Audit Trail
+                <Clock size={16} className="text-[#009965]" /> {selectedLotForAudit.type === 'loose' ? 'Event History (recent)' : 'History & Audit Trail'}
               </h4>
               
               <div className="space-y-3 relative before:absolute before:inset-y-0 before:left-[15px] before:w-0.5 before:bg-[#0B172B]/5">
@@ -1424,10 +1625,26 @@ export default function InventoryModule({
                   const queryId = selectedLotForAudit.item.id;
                   const queryName = selectedLotForAudit.type === 'loose' ? (selectedLotForAudit.item as LooseLot).lotNumber : (selectedLotForAudit.item as CatalogProduct).name;
                   
+                  const looseLot = selectedLotForAudit.type === 'loose' ? (selectedLotForAudit.item as LooseLot) : null;
+                  const usesThisLot = (l: any) =>
+                    l && (l.lotId === queryId ||
+                      (!l.lotId && looseLot && l.lotNumber === looseLot.lotNumber && l.mark === looseLot.mark));
+
                   const relatedHistory = historyList.filter(h => {
-                    if (h.details && h.details.targetId === queryId) return true;
-                    if (h.details && h.details.lotId === queryId) return true;
-                    if (h.details && h.details.lotNumber === queryName) return true;
+                    const d = h.details || {};
+                    if (looseLot) {
+                      // Match on this lot's id (or lot number AND mark together), never on loose text,
+                      // so another lot with the same number or a weight like "101.5 kg" can't match.
+                      if (d.lotId === queryId || d.targetId === queryId || d.target_id === queryId || d.id === queryId) return true;
+                      if (d.deletedLot && d.deletedLot.id === queryId) return true;
+                      if (Array.isArray(d.lotsUsed) && d.lotsUsed.some(usesThisLot)) return true;
+                      if (Array.isArray(d.lots) && d.lots.some((x: any) => x === `${looseLot.mark} (${looseLot.lotNumber})` || x?.lotId === queryId)) return true;
+                      if (h.desc && h.desc.includes(queryId)) return true;
+                      return false;
+                    }
+                    if (d.targetId === queryId || d.lotId === queryId || d.productId === queryId) return true;
+                    if (Array.isArray(d.producedItems) && d.producedItems.some((p: any) => p.productId === queryId)) return true;
+                    if (d.lotNumber === queryName) return true;
                     if (h.desc && h.desc.includes(queryName)) return true;
                     if (h.desc && h.desc.includes(queryId)) return true;
                     return false;
@@ -1443,12 +1660,14 @@ export default function InventoryModule({
 
                   return relatedHistory.map(record => {
                     let bagsUsedDisplay = null;
-                    if (record.details?.lotsUsed && Array.isArray(record.details.lotsUsed)) {
-                      const lotUsage = record.details.lotsUsed.find((l: any) => l.lotId === queryId);
-                      if (lotUsage && lotUsage.bagsUsed) {
+                    if (looseLot && record.details?.lotsUsed && Array.isArray(record.details.lotsUsed)) {
+                      const uses = record.details.lotsUsed.filter(usesThisLot);
+                      if (uses.length > 0) {
+                        const bags = uses.reduce((sum: number, l: any) => sum + (l.bagsUsed === '-' ? 0 : Number(l.bagsUsed) || 0), 0);
+                        const kg = uses.reduce((sum: number, l: any) => sum + (Number(l.weightUsed) || 0), 0);
                         bagsUsedDisplay = (
                           <div className="mt-2 text-xs font-bold text-amber-700 bg-amber-50 inline-block px-2 py-1 rounded border border-amber-200">
-                            Bags Used: {lotUsage.bagsUsed}
+                            This lot: {queryId.startsWith('l-') ? '' : `${bags} bags, `}{kg.toFixed(2)} kg
                           </div>
                         );
                       }
