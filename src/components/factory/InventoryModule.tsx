@@ -16,6 +16,16 @@ interface InventoryModuleProps {
   onEditCatalogProduct: (id: string, data: Partial<CatalogProduct>) => void;
   onDeleteCatalog: (id: string) => void;
   onReceivePacketStock?: (productId: string, quantity: number, date: string) => void;
+  onReceiveLooseLot?: (lotData: {
+    lotNumber: string;
+    grade: string;
+    mark: string;
+    bags: number;
+    weightPerBag: number;
+    weight: number;
+    date: string;
+    labels: string[];
+  }) => void;
   isCatalogUnlocked: boolean;
   onUnlockRequest: () => void;
   onLockRequest: () => void;
@@ -39,6 +49,7 @@ export default function InventoryModule({
   onEditCatalogProduct,
   onDeleteCatalog, 
   onReceivePacketStock,
+  onReceiveLooseLot,
   isCatalogUnlocked,
   onUnlockRequest,
   onLockRequest,
@@ -102,21 +113,35 @@ export default function InventoryModule({
     const perBag = parseFloat(looseForm.weightPerBag);
     const labelsList = looseForm.labels.split(',').map(l => l.trim()).filter(l => l);
 
-    const newLot: LooseLot = {
-      id: Date.now().toString(),
-      lotNumber: looseForm.lotNumber,
-      grade: looseForm.grade,
-      mark: looseForm.mark,
-      bags,
-      weightPerBag: perBag,
-      weight: calculatedLooseTotalWeight,
-      date: looseForm.date,
-      labels: labelsList
-    };
+    if (onReceiveLooseLot) {
+      onReceiveLooseLot({
+        lotNumber: looseForm.lotNumber,
+        grade: looseForm.grade,
+        mark: looseForm.mark,
+        bags,
+        weightPerBag: perBag,
+        weight: calculatedLooseTotalWeight,
+        date: looseForm.date,
+        labels: labelsList
+      });
+    } else {
+      const newLot: LooseLot = {
+        id: Date.now().toString(),
+        lotNumber: looseForm.lotNumber,
+        grade: looseForm.grade,
+        mark: looseForm.mark,
+        bags,
+        weightPerBag: perBag,
+        weight: calculatedLooseTotalWeight,
+        date: looseForm.date,
+        labels: labelsList
+      };
 
-    setLooseInventory(prev => [...prev, newLot]);
-    logSystemAction('CREATE_LOOSE', `Received loose tea lot: ${newLot.lotNumber} (${newLot.mark}) - ${newLot.weight}kg`);
-    triggerToast('Raw loose tea lot received and entered in stock ledger!');
+      setLooseInventory(prev => [...prev, newLot]);
+      logSystemAction('CREATE_LOOSE', `Received loose tea lot: ${newLot.lotNumber} (${newLot.mark}) - ${newLot.weight}kg`);
+      triggerToast('Raw loose tea lot received and entered in stock ledger!');
+    }
+
     setLooseForm({ lotNumber: '', grade: '', mark: '', bags: '', weightPerBag: '', date: new Date().toISOString().split('T')[0], labels: '' });
     setShowReceiveLoose(false);
   };

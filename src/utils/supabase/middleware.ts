@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { SESSION_EXPIRES_COOKIE, SESSION_START_COOKIE } from '@/utils/sessionConfig'
+import { getUserRole } from '@/utils/authRoles'
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -85,7 +86,7 @@ export async function updateSession(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    const role = user.user_metadata?.role;
+    const role = getUserRole(user);
     if (role !== 'admin') {
       const url = request.nextUrl.clone();
       url.pathname = role === 'manager' ? '/factory' : '/dashboard';
@@ -93,7 +94,7 @@ export async function updateSession(request: NextRequest) {
     }
   }
 
-  // Protect Factory routes: Only Admin and Warehouse Manager can access
+  // Protect Factory routes: Only Admin and Warehouse Manager can access (Fix M1: align roles)
   if (pathname.startsWith('/factory')) {
     if (!user || isSessionExpired) {
       const url = request.nextUrl.clone();
@@ -104,7 +105,7 @@ export async function updateSession(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    const role = user.user_metadata?.role;
+    const role = getUserRole(user);
     if (!['admin', 'manager'].includes(role)) {
       const url = request.nextUrl.clone();
       url.pathname = '/unauthorized';
@@ -123,7 +124,7 @@ export async function updateSession(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    const role = user.user_metadata?.role;
+    const role = getUserRole(user);
 
     // Managers cannot access ERP Dashboard
     if (role === 'manager') {
@@ -156,7 +157,7 @@ export async function updateSession(request: NextRequest) {
 
   // Redirect logged-in users away from the login page only if session is active
   if (user && !isSessionExpired && pathname.startsWith('/login')) {
-    const role = user.user_metadata?.role;
+    const role = getUserRole(user);
     const url = request.nextUrl.clone();
     if (role === 'admin') {
       url.pathname = '/portal';

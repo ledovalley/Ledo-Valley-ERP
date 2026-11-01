@@ -2,15 +2,16 @@
 
 import { createClient } from '@/utils/supabase/server';
 import { supabaseAdmin } from '@/utils/supabase/admin';
+import { getUserRole } from '@/utils/authRoles';
 import { revalidatePath } from 'next/cache';
 
-// Enforce factory role permissions
+// Enforce factory role permissions (Fix C2, M1: secure role via authRoles)
 async function enforceFactoryAccess() {
   const { getCachedUser } = await import('@/utils/supabase/server');
   const user = await getCachedUser();
-  const role = user?.user_metadata?.role;
+  const role = getUserRole(user);
 
-  if (!user || !['admin', 'manager', 'employee'].includes(role)) {
+  if (!user || !['admin', 'manager'].includes(role)) {
     throw new Error('Unauthorized: Insufficient permissions for factory operations.');
   }
 
@@ -107,7 +108,7 @@ export async function savePacketProduct(product: {
   }
 
   await supabaseAdmin.from('factory_history').insert({
-    id: `hst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    id: crypto.randomUUID(),
     type: product.id ? 'PACKET_TEMPLATE_UPDATED' : 'PACKET_TEMPLATE_CREATED',
     description: `${product.id ? 'Updated' : 'Created'} packet template: ${product.name} (${product.size} kg/${product.unit})`,
     user_id: user.id,
@@ -139,7 +140,7 @@ export async function deletePacketProduct(productId: string) {
   }
 
   await supabaseAdmin.from('factory_history').insert({
-    id: `hst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    id: crypto.randomUUID(),
     type: 'PACKET_TEMPLATE_DELETED',
     description: `Deleted packet template: ${productId}`,
     user_id: user.id,
@@ -150,7 +151,7 @@ export async function deletePacketProduct(productId: string) {
   return { success: true };
 }
 
-// 1e. Receive Packaged Stock
+// 1e. Receive Packaged Stock (Atomic RPC)
 export async function receivePacketStock(data: {
   productId: string;
   quantity: number;
@@ -161,44 +162,29 @@ export async function receivePacketStock(data: {
     return { error: 'Only admins and managers can receive packaged stock.' };
   }
 
-  const { data: current, error: fetchErr } = await supabaseAdmin
-    .from('factory_packet_catalog')
-    .select('*')
-    .eq('id', data.productId)
-    .single();
-
-  if (fetchErr || !current) {
-    return { error: fetchErr?.message || 'Product not found in packet catalog.' };
+  if (!data.quantity || data.quantity <= 0) {
+    return { error: 'Received quantity must be greater than 0.' };
   }
 
-  const newStock = Number(current.stock) + data.quantity;
+  const historyId = crypto.randomUUID();
+  const userName = user.user_metadata?.name || user.email;
 
-  const { error: updateErr } = await supabaseAdmin
-    .from('factory_packet_catalog')
-    .update({ stock: newStock, updated_at: new Date().toISOString() })
-    .eq('id', data.productId);
-
-  if (updateErr) {
-    return { error: updateErr.message };
-  }
-
-  await supabaseAdmin.from('factory_history').insert({
-    id: `hst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-    type: 'PACKET_STOCK_RECEIVED',
-    description: `Received ${data.quantity} ${current.unit}(s) of "${current.name}". New Stock: ${newStock}`,
-    user_id: user.id,
-    user_name: user.user_metadata?.name || user.email,
-    details: {
-      productId: data.productId,
-      productName: current.name,
-      addedQuantity: data.quantity,
-      newStock,
-      date: data.date
-    }
+  const { data: result, error } = await supabaseAdmin.rpc('fn_receive_packet_stock', {
+    p_product_id: data.productId,
+    p_quantity: data.quantity,
+    p_date: data.date,
+    p_history_id: historyId,
+    p_user_id: user.id,
+    p_user_name: userName
   });
 
+  if (error) {
+    console.error('Error receiving packet stock:', error);
+    return { error: error.message };
+  }
+
   revalidatePath('/factory');
-  return { success: true, newStock };
+  return { success: true, newStock: result?.newStock };
 }
 
 // 2. Add / Edit Loose Lot
@@ -240,9 +226,9 @@ export async function saveLooseLot(lot: {
     return { error: error.message };
   }
 
-  // Record audit history
+  // Record audit history (Fix M3: UUID)
   await supabaseAdmin.from('factory_history').insert({
-    id: `hst-${Date.now()}`,
+    id: crypto.randomUUID(),
     type: isNew ? 'LOT_ADDED' : 'LOT_EDITED',
     description: `${isNew ? 'Added' : 'Updated'} lot ${lot.lotNumber} (${lot.mark}) - ${lot.weight} kg`,
     user_id: user.id,
@@ -276,7 +262,7 @@ export async function deleteLooseLot(lotId: string) {
   }
 
   await supabaseAdmin.from('factory_history').insert({
-    id: `hst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    id: crypto.randomUUID(),
     type: 'LOT_DELETED',
     description: `Deleted loose lot: ${lotId}`,
     user_id: user.id,
@@ -296,11 +282,11 @@ export async function purgeNilLooseLots() {
 
   const systemIds = ['l-balance', 'l-orthodox', 'l-cardamom', 'l-cardamom-husk'];
 
-  // 1. Fetch IDs of lots to delete
+  // 1. Fetch IDs of lots to delete (Fix H1: only delete lots where remaining weight <= 0)
   const { data: lotsToDelete, error: fetchErr } = await supabaseAdmin
     .from('factory_loose_lots')
-    .select('id, lot_number, mark')
-    .or('bags.lte.0,weight.lte.0')
+    .select('id, lot_number, mark, weight, bags')
+    .lte('weight', 0)
     .not('id', 'in', `(${systemIds.join(',')})`);
 
   if (fetchErr) {
@@ -325,9 +311,9 @@ export async function purgeNilLooseLots() {
     return { error: deleteErr.message };
   }
 
-  // 3. Log single immutable audit history entry
+  // 3. Log single immutable audit history entry with UUID (Fix M3)
   await supabaseAdmin.from('factory_history').insert({
-    id: `hst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    id: crypto.randomUUID(),
     type: 'NIL_STOCK_PURGED',
     description: `Purged ${ids.length} empty (NIL) loose tea lots from warehouse.`,
     user_id: user.id,
@@ -342,59 +328,36 @@ export async function purgeNilLooseLots() {
   return { success: true, count: ids.length };
 }
 
-// 3c. Adjust System Ledger / Lot Weight
+// 3c. Adjust System Ledger / Lot Weight (Atomic RPC)
 export async function adjustLedgerLot(targetId: string, amount: number, reason: string) {
   const { user, role } = await enforceFactoryAccess();
   if (!['admin', 'manager'].includes(role)) {
     return { error: 'Only admins and managers can adjust system ledgers.' };
   }
 
-  // 1. Fetch current lot
-  const { data: lot, error: fetchErr } = await supabaseAdmin
-    .from('factory_loose_lots')
-    .select('*')
-    .eq('id', targetId)
-    .single();
-
-  if (fetchErr || !lot) {
-    return { error: fetchErr?.message || 'Ledger lot not found.' };
+  if (!amount || amount === 0) {
+    return { error: 'Adjustment amount cannot be zero.' };
   }
 
-  const prevWeight = Number(lot.weight);
-  const newWeight = Math.max(0, Number((prevWeight + amount).toFixed(3)));
+  const historyId = crypto.randomUUID();
+  const userName = user.user_metadata?.name || user.email;
 
-  // 2. Update weight
-  const { error: updateErr } = await supabaseAdmin
-    .from('factory_loose_lots')
-    .update({
-      weight: newWeight,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', targetId);
-
-  if (updateErr) {
-    return { error: updateErr.message };
-  }
-
-  // 3. Log audit history
-  await supabaseAdmin.from('factory_history').insert({
-    id: `hst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-    type: 'LEDGER_ADJUSTMENT',
-    description: `Adjusted ${lot.mark} by ${amount > 0 ? '+' : ''}${amount} kg. Reason: ${reason}`,
-    user_id: user.id,
-    user_name: user.user_metadata?.name || user.email,
-    details: {
-      target_id: targetId,
-      mark: lot.mark,
-      prev_weight: prevWeight,
-      adjustment_amount: amount,
-      new_weight: newWeight,
-      reason
-    }
+  const { data: result, error } = await supabaseAdmin.rpc('fn_adjust_lot_weight', {
+    p_target_id: targetId,
+    p_amount: amount,
+    p_reason: reason.trim(),
+    p_history_id: historyId,
+    p_user_id: user.id,
+    p_user_name: userName
   });
 
+  if (error) {
+    console.error('Error adjusting ledger lot:', error);
+    return { error: error.message };
+  }
+
   revalidatePath('/factory');
-  return { success: true, newWeight };
+  return { success: true, newWeight: result?.newWeight };
 }
 
 // 4. Fetch Active Blends (Under Process)
@@ -466,7 +429,7 @@ export async function createFactoryBlend(data: {
   const { user } = await enforceFactoryAccess();
 
   const blendId = data.blendId || `BLD-${Date.now()}`;
-  const historyId = `hst-${Date.now()}`;
+  const historyId = crypto.randomUUID();
   const userName = user.user_metadata?.name || user.email;
 
   // Execute ACID stored procedure via supabaseAdmin RPC
@@ -488,7 +451,7 @@ export async function createFactoryBlend(data: {
   }
 
   revalidatePath('/factory');
-  return { success: true, blendId };
+  return { success: true, blendId, serialNo: result?.serialNo };
 }
 
 // 6. Finalize Blend (Atomic Packaging & Completion)
@@ -506,7 +469,7 @@ export async function finalizeFactoryBlend(data: {
 }) {
   const { user } = await enforceFactoryAccess();
 
-  const historyId = `hst-${Date.now()}`;
+  const historyId = crypto.randomUUID();
   const userName = user.user_metadata?.name || user.email;
 
   const { data: result, error } = await supabaseAdmin.rpc('fn_finalize_factory_blend', {
@@ -535,7 +498,7 @@ export async function deleteFactoryBlend(blendId: string) {
     return { error: 'Permission Denied: Only admins and managers can delete under-process blends.' };
   }
 
-  const historyId = `hst-${Date.now()}`;
+  const historyId = crypto.randomUUID();
   const userName = user.user_metadata?.name || user.email;
 
   const { data: result, error } = await supabaseAdmin.rpc('fn_delete_factory_blend', {
@@ -571,5 +534,291 @@ export async function fetchFactoryHistory(limit: number = 300, offset: number = 
   }
 
   return data || [];
+}
+
+// -----------------------------------------------------------------------------
+// 9. Stock Take Types & Server Actions
+// -----------------------------------------------------------------------------
+
+export interface StockTake {
+  id: string;
+  note: string | null;
+  status: 'OPEN' | 'APPLIED' | 'CANCELLED';
+  startedAt: string;
+  startedByName: string | null;
+  closedAt: string | null;
+  closedByName: string | null;
+  summary: Record<string, any> | null;
+}
+
+export interface StockTakeCount {
+  id: string;
+  stockTakeId: string;
+  lotId: string | null;
+  lotNumber: string;
+  mark: string;
+  grade: string | null;
+  countedBags: number;
+  weightPerBag: number | null;
+  countedWeight: number;
+  note: string | null;
+  updatedAt: string;
+  updatedByName: string | null;
+}
+
+function mapTake(t: any): StockTake {
+  return {
+    id: t.id,
+    note: t.note ?? null,
+    status: t.status,
+    startedAt: t.started_at,
+    startedByName: t.started_by_name ?? null,
+    closedAt: t.closed_at ?? null,
+    closedByName: t.closed_by_name ?? null,
+    summary: t.summary ?? null
+  };
+}
+
+function mapCount(c: any): StockTakeCount {
+  return {
+    id: c.id,
+    stockTakeId: c.stock_take_id,
+    lotId: c.lot_id ?? null,
+    lotNumber: c.lot_number,
+    mark: c.mark,
+    grade: c.grade ?? null,
+    countedBags: Number(c.counted_bags),
+    weightPerBag: c.weight_per_bag !== null && c.weight_per_bag !== undefined ? Number(c.weight_per_bag) : null,
+    countedWeight: Number(c.counted_weight),
+    note: c.note ?? null,
+    updatedAt: c.updated_at,
+    updatedByName: c.updated_by_name ?? null
+  };
+}
+
+export async function fetchOpenStockTake(): Promise<
+  { take: StockTake | null; counts: StockTakeCount[] } | { error: string }
+> {
+  try {
+    await enforceFactoryAccess();
+    const supabase = await createClient();
+
+    const { data: take, error } = await supabase
+      .from('factory_stock_takes')
+      .select('*')
+      .eq('status', 'OPEN')
+      .maybeSingle();
+
+    if (error) return { error: error.message };
+    if (!take) return { take: null, counts: [] };
+
+    const { data: counts, error: cErr } = await supabase
+      .from('factory_stock_take_counts')
+      .select('*')
+      .eq('stock_take_id', take.id)
+      .order('updated_at', { ascending: true });
+
+    if (cErr) return { error: cErr.message };
+
+    return { take: mapTake(take), counts: (counts || []).map(mapCount) };
+  } catch (err: any) {
+    return { error: err.message };
+  }
+}
+
+export async function fetchStockTakeHistory(limit: number = 10): Promise<{ takes: StockTake[] } | { error: string }> {
+  try {
+    await enforceFactoryAccess();
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from('factory_stock_takes')
+      .select('*')
+      .neq('status', 'OPEN')
+      .order('started_at', { ascending: false })
+      .limit(limit);
+
+    if (error) return { error: error.message };
+    return { takes: (data || []).map(mapTake) };
+  } catch (err: any) {
+    return { error: err.message };
+  }
+}
+
+export async function startStockTake(note?: string) {
+  try {
+    const { user, role } = await enforceFactoryAccess();
+    if (!['admin', 'manager'].includes(role)) return { error: 'Only admins and managers can run a stock take.' };
+
+    const userName = user.user_metadata?.name || user.email;
+
+    const { data, error } = await supabaseAdmin
+      .from('factory_stock_takes')
+      .insert({ note: (note || '').trim() || null, started_by: user.id, started_by_name: userName })
+      .select('*')
+      .single();
+
+    if (error) {
+      if (/uq_factory_stock_takes_one_open|duplicate key/i.test(error.message)) {
+        return { error: 'A stock take is already in progress. Continue or cancel it first.' };
+      }
+      return { error: error.message };
+    }
+
+    await supabaseAdmin.from('factory_history').insert({
+      id: crypto.randomUUID(),
+      type: 'STOCK_TAKE_STARTED',
+      description: `Started a stock take${data.note ? `: ${data.note}` : ''}.`,
+      user_id: user.id,
+      user_name: userName,
+      details: { stockTakeId: data.id }
+    });
+
+    return { success: true, take: mapTake(data) };
+  } catch (err: any) {
+    return { error: err.message };
+  }
+}
+
+export async function saveStockTakeCount(
+  takeId: string,
+  entry: {
+    id?: string;
+    lotId: string | null;
+    lotNumber: string;
+    mark: string;
+    grade?: string | null;
+    countedBags: number;
+    weightPerBag?: number | null;
+    countedWeight: number;
+    note?: string | null;
+  }
+) {
+  try {
+    const { user, role } = await enforceFactoryAccess();
+    if (!['admin', 'manager'].includes(role)) return { error: 'Only admins and managers can run a stock take.' };
+
+    const userName = user.user_metadata?.name || user.email;
+
+    const row = {
+      stock_take_id: takeId,
+      lot_id: entry.lotId,
+      lot_number: entry.lotNumber.trim(),
+      mark: entry.mark.trim(),
+      grade: (entry.grade || '').trim() || null,
+      counted_bags: entry.countedBags,
+      weight_per_bag: entry.weightPerBag ?? null,
+      counted_weight: Number(entry.countedWeight.toFixed(3)),
+      note: (entry.note || '').trim() || null,
+      updated_at: new Date().toISOString(),
+      updated_by_name: userName
+    };
+
+    let existingId: string | null = entry.id ?? null;
+    if (entry.lotId) {
+      const { data: existing, error: findErr } = await supabaseAdmin
+        .from('factory_stock_take_counts')
+        .select('id')
+        .eq('stock_take_id', takeId)
+        .eq('lot_id', entry.lotId)
+        .maybeSingle();
+
+      if (findErr) return { error: findErr.message };
+      existingId = existing?.id ?? null;
+    }
+
+    const query = existingId
+      ? supabaseAdmin.from('factory_stock_take_counts').update(row).eq('id', existingId).eq('stock_take_id', takeId)
+      : supabaseAdmin.from('factory_stock_take_counts').insert(row);
+
+    const { data, error } = await query.select('*').single();
+    if (error) return { error: error.message };
+
+    return { success: true, count: mapCount(data) };
+  } catch (err: any) {
+    return { error: err.message };
+  }
+}
+
+export async function deleteStockTakeCount(takeId: string, countId: string) {
+  try {
+    const { role } = await enforceFactoryAccess();
+    if (!['admin', 'manager'].includes(role)) return { error: 'Only admins and managers can run a stock take.' };
+
+    const { error } = await supabaseAdmin
+      .from('factory_stock_take_counts')
+      .delete()
+      .eq('id', countId)
+      .eq('stock_take_id', takeId);
+
+    if (error) return { error: error.message };
+    return { success: true };
+  } catch (err: any) {
+    return { error: err.message };
+  }
+}
+
+export async function applyStockTake(
+  takeId: string,
+  expected: { lotId: string; bags: number; weight: number }[],
+  zeroUncounted: boolean
+) {
+  try {
+    const { user, role } = await enforceFactoryAccess();
+    if (!['admin', 'manager'].includes(role)) return { error: 'Only admins and managers can apply a stock take.' };
+
+    const userName = user.user_metadata?.name || user.email;
+
+    const { data, error } = await supabaseAdmin.rpc('fn_apply_stock_take', {
+      p_take_id: takeId,
+      p_expected: (expected || []).map(e => ({ lotId: e.lotId, bags: Number(e.bags), weight: Number(e.weight) })),
+      p_zero_uncounted: !!zeroUncounted,
+      p_user_id: user.id,
+      p_user_name: userName
+    });
+
+    if (error) return { error: error.message };
+
+    revalidatePath('/factory');
+    return { success: true, summary: data || {} };
+  } catch (err: any) {
+    return { error: err.message };
+  }
+}
+
+export async function cancelStockTake(takeId: string, deletePassword?: string) {
+  try {
+    const { checkDeletePassword } = await import('@/utils/deletePassword');
+    const pwError = checkDeletePassword(deletePassword);
+    if (pwError) return { error: pwError };
+
+    const { user, role } = await enforceFactoryAccess();
+    if (!['admin', 'manager'].includes(role)) return { error: 'Only admins and managers can cancel a stock take.' };
+
+    const userName = user.user_metadata?.name || user.email;
+
+    const { data, error } = await supabaseAdmin
+      .from('factory_stock_takes')
+      .update({ status: 'CANCELLED', closed_at: new Date().toISOString(), closed_by: user.id, closed_by_name: userName })
+      .eq('id', takeId)
+      .eq('status', 'OPEN')
+      .select('id')
+      .maybeSingle();
+
+    if (error) return { error: error.message };
+    if (!data) return { error: 'This stock take is no longer open.' };
+
+    await supabaseAdmin.from('factory_history').insert({
+      id: crypto.randomUUID(),
+      type: 'STOCK_TAKE_CANCELLED',
+      description: 'Cancelled a stock take. No stock was changed.',
+      user_id: user.id,
+      user_name: userName,
+      details: { stockTakeId: takeId }
+    });
+
+    return { success: true };
+  } catch (err: any) {
+    return { error: err.message };
+  }
 }
 

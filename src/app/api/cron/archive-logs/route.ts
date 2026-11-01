@@ -2,7 +2,13 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/utils/supabase/admin';
 
 export async function GET(request: Request) {
-  // In a real production app, verify a CRON_SECRET header here to prevent abuse.
+  // Fix M4: Verify CRON_SECRET authorization header
+  const authHeader = request.headers.get('authorization');
+  const cronSecret = process.env.CRON_SECRET;
+
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: 'Unauthorized: Invalid cron secret' }, { status: 401 });
+  }
   
   try {
     // 1. Calculate the cutoff for logs (36 hours ago)

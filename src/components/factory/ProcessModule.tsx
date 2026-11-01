@@ -19,6 +19,19 @@ interface ProcessModuleProps {
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
   systemUser: any;
   logSystemAction: (action: string, details: string, isError?: boolean) => void;
+  onFinalizeBlend?: (data: {
+    blendId: string;
+    returnedLoose: number;
+    returnLotId: string;
+    outputs: {
+      productId: string;
+      productName: string;
+      quantity: number;
+      unit: string;
+      totalWeight: number;
+    }[];
+  }) => Promise<{ success: boolean; error?: string }>;
+  onDeleteBlend?: (blendId: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 function SearchableProductSelect({ value, onChange, catalog }: { value: string, onChange: (val: string) => void, catalog: CatalogProduct[] }) {
@@ -96,7 +109,9 @@ export default function ProcessModule({
   onRevertAndEdit,
   triggerToast,
   systemUser,
-  logSystemAction
+  logSystemAction,
+  onFinalizeBlend,
+  onDeleteBlend
 }: ProcessModuleProps) {
   const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
   const [activeFinalizingBlend, setActiveFinalizingBlend] = useState<BlendProcess | null>(null);
@@ -247,7 +262,7 @@ export default function ProcessModule({
     return packetsWeight + looseWeight;
   }, [calculatedOutputs, returnedLooseWeight]);
 
-  const submitFinalization = () => {
+  const submitFinalization = async () => {
     if (!activeFinalizingBlend) return;
     
     for (let i = 0; i < producedLines.length; i++) {
@@ -263,86 +278,115 @@ export default function ProcessModule({
       return;
     }
 
-    setPacketCatalog(prev => {
-      return prev.map(catalogItem => {
-        const matches = calculatedOutputs.filter(o => o.productId === catalogItem.id);
-        if (matches.length > 0) {
-          const addedQty = matches.reduce((sum, current) => sum + parseFloat(current.quantity), 0);
-          return {
-            ...catalogItem,
-            stock: catalogItem.stock + addedQty
-          };
-        }
-        return catalogItem;
-      });
-    });
-
     const returnedLoose = parseFloat(returnedLooseWeight) || 0;
-    if (returnedLoose > 0) {
-      setLooseInventory(prev => prev.map(lot => {
-        if (lot.id === 'l-balance') {
-          return { ...lot, weight: lot.weight + returnedLoose };
-        }
-        return lot;
-      }));
-    }
+    const outputs = calculatedOutputs.filter(o => o.productId).map(o => ({
+      productId: o.productId,
+      productName: o.name,
+      quantity: parseFloat(o.quantity),
+      unit: o.unit,
+      totalWeight: o.totalWeight
+    }));
 
-    const finalizedHistory: HistoryRecord = {
-      id: 'HST-' + Date.now().toString(),
-      type: 'Finalized Process',
-      desc: `Finalized blend "${activeFinalizingBlend.blendName}" with yield of ${totalOutputWeight.toFixed(2)} kg.`,
-      timestamp: new Date().toISOString(),
-      details: {
-        ...activeFinalizingBlend,
-        status: 'Completed',
-        completedDate: new Date().toISOString().split('T')[0],
-        totalOutputQuantity: totalOutputWeight,
-        returnedLooseWeight: returnedLoose,
-        producedItems: calculatedOutputs.filter(o => o.productId).map(o => ({
-          productName: o.name,
-          quantity: parseFloat(o.quantity),
-          unit: o.unit,
-          totalWeight: o.totalWeight
-        }))
+    if (onFinalizeBlend) {
+      const res = await onFinalizeBlend({
+        blendId: activeFinalizingBlend.id,
+        returnedLoose,
+        returnLotId: 'l-balance',
+        outputs
+      });
+
+      if (!res.success) {
+        return; // Toast error handled in parent
       }
-    };
 
-    setHistoryList(prev => [finalizedHistory, ...prev]);
-    setUnderProcess(prev => prev.filter(b => b.id !== activeFinalizingBlend.id));
-    setActiveFinalizingBlend(null);
-    setSelectedForMerge(prev => prev.filter(id => id !== activeFinalizingBlend.id));
-    
-    logSystemAction('FINALIZE_BLEND', `Finalized ${activeFinalizingBlend.blendName}. Output: ${totalOutputWeight.toFixed(2)}kg`);
-    triggerToast(`"${activeFinalizingBlend.blendName}" complete. Stock updated safely!`);
+      setActiveFinalizingBlend(null);
+      setSelectedForMerge(prev => prev.filter(id => id !== activeFinalizingBlend.id));
+      logSystemAction('FINALIZE_BLEND', `Finalized ${activeFinalizingBlend.blendName}. Output: ${totalOutputWeight.toFixed(2)}kg`);
+    } else {
+      setPacketCatalog(prev => {
+        return prev.map(catalogItem => {
+          const matches = calculatedOutputs.filter(o => o.productId === catalogItem.id);
+          if (matches.length > 0) {
+            const addedQty = matches.reduce((sum, current) => sum + parseFloat(current.quantity), 0);
+            return {
+              ...catalogItem,
+              stock: catalogItem.stock + addedQty
+            };
+          }
+          return catalogItem;
+        });
+      });
+
+      if (returnedLoose > 0) {
+        setLooseInventory(prev => prev.map(lot => {
+          if (lot.id === 'l-balance') {
+            return { ...lot, weight: lot.weight + returnedLoose };
+          }
+          return lot;
+        }));
+      }
+
+      const finalizedHistory: HistoryRecord = {
+        id: 'HST-' + Date.now().toString(),
+        type: 'Finalized Process',
+        desc: `Finalized blend "${activeFinalizingBlend.blendName}" with yield of ${totalOutputWeight.toFixed(2)} kg.`,
+        timestamp: new Date().toISOString(),
+        details: {
+          ...activeFinalizingBlend,
+          status: 'Completed',
+          completedDate: new Date().toISOString().split('T')[0],
+          totalOutputQuantity: totalOutputWeight,
+          returnedLooseWeight: returnedLoose,
+          producedItems: outputs
+        }
+      };
+
+      setHistoryList(prev => [finalizedHistory, ...prev]);
+      setUnderProcess(prev => prev.filter(b => b.id !== activeFinalizingBlend.id));
+      setActiveFinalizingBlend(null);
+      setSelectedForMerge(prev => prev.filter(id => id !== activeFinalizingBlend.id));
+      
+      logSystemAction('FINALIZE_BLEND', `Finalized ${activeFinalizingBlend.blendName}. Output: ${totalOutputWeight.toFixed(2)}kg`);
+      triggerToast(`"${activeFinalizingBlend.blendName}" complete. Stock updated safely!`);
+    }
   };
 
-  const handleDeleteBlend = (blend: BlendProcess) => {
-    if (systemUser.role !== 'super_admin') {
-      return triggerToast("Permission Denied: Only super admins can delete processing blends.", "error");
+  const handleDeleteBlend = async (blend: BlendProcess) => {
+    if (systemUser.role !== 'super_admin' && systemUser.role !== 'manager') {
+      return triggerToast("Permission Denied: Only managers and admins can delete processing blends.", "error");
     }
 
     if (!window.confirm(`Are you sure you want to delete "${blend.blendName}"? This will return the utilized stock back to the loose ledger.`)) {
       return;
     }
 
-    setLooseInventory((prev: LooseLot[]) => prev.map(lot => {
-      const usedLot = blend.lotsUsed.find(l => l.lotNumber === lot.lotNumber && l.mark === lot.mark);
-      if (usedLot) {
-        if (lot.id.startsWith('l-')) {
-          return { ...lot, weight: lot.weight + usedLot.weightUsed };
-        } else {
-          const bagsRefund = usedLot.bagsUsed === '-' ? 0 : Number(usedLot.bagsUsed);
-          const weightRefund = usedLot.weightUsed;
-          return { ...lot, bags: lot.bags + bagsRefund, weight: lot.weight + weightRefund };
-        }
+    if (onDeleteBlend) {
+      const res = await onDeleteBlend(blend.id);
+      if (!res.success) {
+        return; // Toast error handled in parent
       }
-      return lot;
-    }));
+      setSelectedForMerge(prev => prev.filter(id => id !== blend.id));
+      logSystemAction('DELETE_BLEND', `Deleted blend: ${blend.blendName} and reverted stock`, true);
+    } else {
+      setLooseInventory((prev: LooseLot[]) => prev.map(lot => {
+        const usedLot = blend.lotsUsed.find(l => l.lotNumber === lot.lotNumber && l.mark === lot.mark);
+        if (usedLot) {
+          if (lot.id.startsWith('l-')) {
+            return { ...lot, weight: lot.weight + usedLot.weightUsed };
+          } else {
+            const bagsRefund = usedLot.bagsUsed === '-' ? 0 : Number(usedLot.bagsUsed);
+            const weightRefund = usedLot.weightUsed;
+            return { ...lot, bags: lot.bags + bagsRefund, weight: lot.weight + weightRefund };
+          }
+        }
+        return lot;
+      }));
 
-    setUnderProcess((prev: BlendProcess[]) => prev.filter(b => b.id !== blend.id));
-    setSelectedForMerge(prev => prev.filter(id => id !== blend.id));
-    logSystemAction('DELETE_BLEND', `Deleted blend: ${blend.blendName} and reverted stock`, true);
-    triggerToast(`Blend "${blend.blendName}" deleted and stock reverted successfully.`);
+      setUnderProcess((prev: BlendProcess[]) => prev.filter(b => b.id !== blend.id));
+      setSelectedForMerge(prev => prev.filter(id => id !== blend.id));
+      logSystemAction('DELETE_BLEND', `Deleted blend: ${blend.blendName} and reverted stock`, true);
+      triggerToast(`Blend "${blend.blendName}" deleted and stock reverted successfully.`);
+    }
   };
 
   const handleDuplicateBlend = (blend: BlendProcess) => {

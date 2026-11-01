@@ -35,7 +35,8 @@ export interface BlendProcess {
     weightUsed: number;
   }[];
   totalQuantity: number;
-  status: 'PENDING' | 'PACKED';
+  status: 'PENDING' | 'PACKED' | 'CANCELLED';
+  serialNo?: number | null;
 }
 
 export interface HistoryRecord {

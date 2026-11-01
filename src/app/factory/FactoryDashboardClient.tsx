@@ -17,12 +17,14 @@ import BlendModule from "@/components/factory/BlendModule";
 import ProcessModule from "@/components/factory/ProcessModule";
 import HistoryModule from "@/components/factory/HistoryModule";
 import MissingBlendsModule from "@/components/factory/MissingBlendsModule";
+import StockTakeModule from "@/components/factory/StockTakeModule";
 import ConfirmModal from "@/components/factory/ConfirmModal";
 
 import TopNavbar from "@/components/layout/TopNavbar";
 import { LooseLot, CatalogProduct, BlendProcess, HistoryRecord, SystemUser } from "@/types/factory";
 import {
   fetchLooseLots,
+  fetchPacketCatalog,
   saveLooseLot,
   deleteLooseLot,
   purgeNilLooseLots,
@@ -230,20 +232,30 @@ export default function FactoryDashboardClient({
       const existing = looseInventory.find(l => l.id === id);
       if (!existing) return;
 
-      const newBags = parseInt(updatedData.bags) || 0;
-      const newWpb = parseFloat(updatedData.weightPerBag) || 0;
       const newLabels = Array.isArray(updatedData.labels)
         ? updatedData.labels
         : (updatedData.labels || "").split(",").map((l: string) => l.trim()).filter((l: string) => l);
+
+      // Preserve existing consumed weight unless bags/wpb are explicitly provided and changed
+      const bagsChanged = updatedData.bags !== undefined && Number(updatedData.bags) !== existing.bags;
+      const wpbChanged = updatedData.weightPerBag !== undefined && Number(updatedData.weightPerBag) !== existing.weightPerBag;
+
+      const finalBags = updatedData.bags !== undefined ? (parseInt(updatedData.bags) || 0) : existing.bags;
+      const finalWpb = updatedData.weightPerBag !== undefined ? (parseFloat(updatedData.weightPerBag) || 0) : existing.weightPerBag;
+      
+      // If bags or wpb were explicitly edited in the modal, recompute weight, otherwise preserve current remaining weight
+      const finalWeight = (bagsChanged || wpbChanged) 
+        ? finalBags * finalWpb 
+        : (updatedData.weight !== undefined ? Number(updatedData.weight) : existing.weight);
 
       const payload = {
         id,
         lotNumber: updatedData.lotNumber || existing.lotNumber,
         mark: updatedData.mark || existing.mark,
         grade: updatedData.grade || existing.grade,
-        bags: newBags,
-        weightPerBag: newWpb,
-        weight: newBags * newWpb,
+        bags: finalBags,
+        weightPerBag: finalWpb,
+        weight: finalWeight,
         date: updatedData.date || existing.date,
         labels: newLabels
       };
@@ -253,8 +265,177 @@ export default function FactoryDashboardClient({
         triggerToast(res.error, "error");
       } else {
         setLooseInventory(prev => prev.map(l => (l.id === id ? payload : l)));
-        triggerToast("Lot updated in database.");
+        triggerToast("Lot details updated in database.");
       }
+    });
+  };
+
+  const handleReceiveLooseLot = (lotData: {
+    lotNumber: string;
+    grade: string;
+    mark: string;
+    bags: number;
+    weightPerBag: number;
+    weight: number;
+    date: string;
+    labels: string[];
+  }) => {
+    startTransition(async () => {
+      const tempId = `lot-${Date.now()}`;
+      const payload = {
+        id: tempId,
+        ...lotData
+      };
+
+      const res = await saveLooseLot(payload);
+      if (res?.error) {
+        triggerToast(res.error, "error");
+      } else {
+        const savedLot = { ...payload, id: res?.lotId || tempId };
+        setLooseInventory(prev => [savedLot, ...prev]);
+        triggerToast(`Received loose tea lot ${lotData.lotNumber} (${lotData.mark}) saved to database!`);
+      }
+    });
+  };
+
+  const handleCreateBlend = async (data: {
+    blendId?: string;
+    blendName: string;
+    batchNo: string;
+    date: string;
+    totalQuantity: number;
+    lots: {
+      lotId: string;
+      lotNumber: string;
+      mark: string;
+      grade?: string;
+      bagsUsed: number | string;
+      weightUsed: number;
+    }[];
+  }) => {
+    return new Promise<{ success: boolean; blendId?: string; serialNo?: number; error?: string }>((resolve) => {
+      startTransition(async () => {
+        const sanitizedLots = data.lots.map(l => ({
+          lotId: l.lotId,
+          lotNumber: l.lotNumber,
+          mark: l.mark,
+          grade: l.grade,
+          bagsUsed: l.bagsUsed === '-' || l.bagsUsed === 'N/A' ? 0 : Number(l.bagsUsed),
+          weightUsed: Number(l.weightUsed)
+        }));
+
+        const res = await createFactoryBlend({
+          blendId: data.blendId,
+          blendName: data.blendName,
+          batchNo: data.batchNo,
+          date: data.date,
+          totalQuantity: data.totalQuantity,
+          lots: sanitizedLots
+        });
+
+        if (res?.error) {
+          triggerToast(res.error, "error");
+          resolve({ success: false, error: res.error });
+        } else {
+          // Re-sync loose lots and active blends from server
+          const [freshLots, freshBlends, freshHistory] = await Promise.all([
+            fetchLooseLots(),
+            fetchUnderProcessBlends(),
+            fetchFactoryHistory(100, 0)
+          ]);
+          setLooseInventory(freshLots);
+          setUnderProcess(freshBlends);
+          setHistoryList(freshHistory.map(h => ({
+            id: h.id,
+            type: h.type,
+            desc: h.description,
+            timestamp: h.timestamp,
+            userId: h.user_id,
+            userName: h.user_name,
+            details: h.details
+          })));
+
+          triggerToast(`Blend [${data.batchNo}] saved to database!`);
+          resolve({ success: true, blendId: res.blendId, serialNo: res.serialNo });
+        }
+      });
+    });
+  };
+
+  const handleFinalizeBlend = async (data: {
+    blendId: string;
+    returnedLoose: number;
+    returnLotId: string;
+    outputs: {
+      productId: string;
+      productName: string;
+      quantity: number;
+      unit: string;
+      totalWeight: number;
+    }[];
+  }) => {
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      startTransition(async () => {
+        const res = await finalizeFactoryBlend(data);
+        if (res?.error) {
+          triggerToast(res.error, "error");
+          resolve({ success: false, error: res.error });
+        } else {
+          const [freshLots, freshBlends, freshCatalog, freshHistory] = await Promise.all([
+            fetchLooseLots(),
+            fetchUnderProcessBlends(),
+            fetchPacketCatalog(),
+            fetchFactoryHistory(100, 0)
+          ]);
+          setLooseInventory(freshLots);
+          setUnderProcess(freshBlends);
+          setPacketCatalog(freshCatalog);
+          setHistoryList(freshHistory.map(h => ({
+            id: h.id,
+            type: h.type,
+            desc: h.description,
+            timestamp: h.timestamp,
+            userId: h.user_id,
+            userName: h.user_name,
+            details: h.details
+          })));
+
+          triggerToast("Blend declared packed & stock updated in database!");
+          resolve({ success: true });
+        }
+      });
+    });
+  };
+
+  const handleDeleteBlendAction = async (blendId: string) => {
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      startTransition(async () => {
+        const res = await deleteFactoryBlend(blendId);
+        if (res?.error) {
+          triggerToast(res.error, "error");
+          resolve({ success: false, error: res.error });
+        } else {
+          const [freshLots, freshBlends, freshHistory] = await Promise.all([
+            fetchLooseLots(),
+            fetchUnderProcessBlends(),
+            fetchFactoryHistory(100, 0)
+          ]);
+          setLooseInventory(freshLots);
+          setUnderProcess(freshBlends);
+          setHistoryList(freshHistory.map(h => ({
+            id: h.id,
+            type: h.type,
+            desc: h.description,
+            timestamp: h.timestamp,
+            userId: h.user_id,
+            userName: h.user_name,
+            details: h.details
+          })));
+
+          triggerToast("Blend deleted and stock safely refunded in database.");
+          resolve({ success: true });
+        }
+      });
     });
   };
 
@@ -427,6 +608,7 @@ export default function FactoryDashboardClient({
             onEditCatalogProduct={handleEditCatalogProduct}
             onDeleteCatalog={handleDeleteCatalogProduct}
             onReceivePacketStock={handleReceivePacketStock}
+            onReceiveLooseLot={handleReceiveLooseLot}
             isCatalogUnlocked={userRole === "admin" || userRole === "manager"}
             onUnlockRequest={() => triggerToast("Role-based permissions are active.")}
             onLockRequest={() => { }}
@@ -452,6 +634,7 @@ export default function FactoryDashboardClient({
             triggerToast={triggerToast}
             systemUser={systemUser}
             logSystemAction={logSystemAction}
+            onCreateBlend={handleCreateBlend}
           />
         )}
 
@@ -470,6 +653,8 @@ export default function FactoryDashboardClient({
             triggerToast={triggerToast}
             systemUser={systemUser}
             logSystemAction={logSystemAction}
+            onFinalizeBlend={handleFinalizeBlend}
+            onDeleteBlend={handleDeleteBlendAction}
           />
         )}
 
@@ -484,6 +669,18 @@ export default function FactoryDashboardClient({
 
         {activeTab === "missing_blends" && (
           <MissingBlendsModule missingBlends={missingBlends} />
+        )}
+
+        {activeTab === "stock_take" && (
+          <StockTakeModule
+            looseInventory={looseInventory}
+            canManage={userRole === "admin" || userRole === "manager"}
+            triggerToast={triggerToast}
+            onApplied={async () => {
+              const freshLots = await fetchLooseLots();
+              setLooseInventory(freshLots);
+            }}
+          />
         )}
       </div>
 

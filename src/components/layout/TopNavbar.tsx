@@ -14,7 +14,8 @@ import {
   X,
   ChevronDown,
   Clock,
-  Award
+  Award,
+  ClipboardCheck
 } from 'lucide-react';
 import SessionCountdown from '@/components/SessionCountdown';
 import Image from 'next/image';
@@ -62,7 +63,10 @@ export default function TopNavbar({
         { label: 'Under Process', id: 'process', icon: LayoutDashboard, badge: factoryBadges?.process },
         { label: 'History Ledger', id: 'history', icon: Activity },
         ...(userRole === 'admin' || userRole === 'manager'
-          ? [{ label: 'Gap Analysis', id: 'missing_blends', icon: Award, badge: factoryBadges?.missing }]
+          ? [
+            { label: 'Gap Analysis', id: 'missing_blends', icon: Award, badge: factoryBadges?.missing },
+            { label: 'Stock Take', id: 'stock_take', icon: ClipboardCheck }
+          ]
           : []),
       ]
       : [

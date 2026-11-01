@@ -208,16 +208,28 @@ export async function createSaleRecord(formData: FormData) {
     created_at: createdAt
   })
 
-  // If rep is on an active shift, auto-accumulate shift metrics
+  // If rep is on an active shift, auto-accumulate shift metrics atomically via Postgres (Fix H6)
   if (activeShift) {
-    await supabase.from('shifts').update({
-      orders_count: (activeShift.orders_count || 0) + 1,
-      visits_count: (activeShift.visits_count || 0) + 1,
-      total_order_value: (Number(activeShift.total_order_value) || 0) + amount,
-      cash_collected: (Number(activeShift.cash_collected) || 0) + cash_amount,
-      online_collected: (Number(activeShift.online_collected) || 0) + online_amount,
-      market_due: (Number(activeShift.market_due) || 0) + due_amount
-    }).eq('id', activeShift.id)
+    const { error: rpcErr } = await supabase.rpc('fn_record_sale_on_shift', {
+      p_shift_id: activeShift.id,
+      p_order_value: amount,
+      p_cash_amount: cash_amount,
+      p_online_amount: online_amount,
+      p_due_amount: due_amount
+    })
+
+    if (rpcErr) {
+      // Fallback update if RPC is not yet executed in DB
+      console.warn('Shift atomic RPC fallback:', rpcErr.message)
+      await supabase.from('shifts').update({
+        orders_count: (activeShift.orders_count || 0) + 1,
+        visits_count: (activeShift.visits_count || 0) + 1,
+        total_order_value: (Number(activeShift.total_order_value) || 0) + amount,
+        cash_collected: (Number(activeShift.cash_collected) || 0) + cash_amount,
+        online_collected: (Number(activeShift.online_collected) || 0) + online_amount,
+        market_due: (Number(activeShift.market_due) || 0) + due_amount
+      }).eq('id', activeShift.id)
+    }
   }
   
   revalidatePath('/dashboard/sales')
@@ -261,11 +273,18 @@ export async function logNoOrderVisit(formData: FormData) {
 
   if (error) return { error: error.message }
 
-  // Increment visit count in active shift
+  // Increment visit count in active shift atomically (Fix H6)
   if (activeShift) {
-    await supabase.from('shifts').update({
-      visits_count: (activeShift.visits_count || 0) + 1
-    }).eq('id', activeShift.id)
+    const { error: rpcErr } = await supabase.rpc('fn_increment_shift_visits', {
+      p_shift_id: activeShift.id
+    })
+
+    if (rpcErr) {
+      // Fallback update
+      await supabase.from('shifts').update({
+        visits_count: (activeShift.visits_count || 0) + 1
+      }).eq('id', activeShift.id)
+    }
   }
 
   revalidatePath('/dashboard/sales')

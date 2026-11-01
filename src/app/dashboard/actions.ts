@@ -263,7 +263,7 @@ export async function endShift(formData: FormData) {
   const cash_deposited = parseFloat(formData.get('cash_deposited') as string) || 0
   const notes = (formData.get('notes') as string)?.trim() || null
 
-  // Fetch shift details to compute final distance & cash discrepancy
+  // Fetch shift details to compute final distance & cash discrepancy (Fix M2: ensure shift is active/paused)
   const { data: shift, error: fetchErr } = await supabase
     .from('shifts')
     .select('*')
@@ -271,6 +271,10 @@ export async function endShift(formData: FormData) {
     .single()
 
   if (fetchErr || !shift) return { error: "Shift not found" }
+
+  if (shift.status === 'completed' || shift.status === 'cancelled') {
+    return { error: `Shift has already been ${shift.status} and cannot be ended again.` }
+  }
 
   const startOdo = Number(shift.odometer_start) || 0
   const total_distance = Math.max(0, odometer_end - startOdo)

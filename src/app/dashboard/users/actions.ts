@@ -2,13 +2,14 @@
 
 import { supabaseAdmin } from '@/utils/supabase/admin'
 import { createClient } from '@/utils/supabase/server'
+import { getUserRole } from '@/utils/authRoles'
 import { revalidatePath } from 'next/cache'
 
 // Ensure whoever is calling these has admin/manager rights
 async function enforceRolePermissions(allowedRoles: string[]) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const role = user?.user_metadata?.role
+  const role = getUserRole(user)
 
   if (!user || !allowedRoles.includes(role)) {
     throw new Error('Unauthorized Action')
@@ -18,8 +19,11 @@ async function enforceRolePermissions(allowedRoles: string[]) {
 export async function fetchUsers() {
   await enforceRolePermissions(['admin'])
   
-  // Note: listUsers is limited to 50 users by default. For a real app, implement pagination.
-  const { data, error } = await supabaseAdmin.auth.admin.listUsers()
+  // Fix L2: Paginate / expand perPage to prevent capping at default 50
+  const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+    page: 1,
+    perPage: 1000
+  })
   
   if (error) throw new Error(error.message)
   return data.users
@@ -47,10 +51,14 @@ export async function createUser(formData: FormData) {
     allowances = []
   }
 
+  // Fix C2: Write role to app_metadata (secure) as well as user_metadata
   const { error } = await supabaseAdmin.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
+    app_metadata: {
+      role
+    },
     user_metadata: { 
       role, 
       name,
@@ -88,8 +96,12 @@ export async function updateUser(id: string, formData: FormData) {
     allowances = []
   }
 
+  // Fix C2: Update app_metadata role
   const { error } = await supabaseAdmin.auth.admin.updateUserById(id, {
     email,
+    app_metadata: {
+      role
+    },
     user_metadata: { 
       role, 
       name,

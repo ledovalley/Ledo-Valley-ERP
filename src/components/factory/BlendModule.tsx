@@ -16,6 +16,21 @@ interface BlendModuleProps {
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
   systemUser: any;
   logSystemAction: (action: string, details: string, isError?: boolean) => void;
+  onCreateBlend?: (data: {
+    blendId?: string;
+    blendName: string;
+    batchNo: string;
+    date: string;
+    totalQuantity: number;
+    lots: {
+      lotId: string;
+      lotNumber: string;
+      mark: string;
+      grade?: string;
+      bagsUsed: number | string;
+      weightUsed: number;
+    }[];
+  }) => Promise<{ success: boolean; blendId?: string; serialNo?: number; error?: string }>;
 }
 
 export default function BlendModule({
@@ -31,7 +46,8 @@ export default function BlendModule({
   setEditingProcess,
   triggerToast,
   systemUser,
-  logSystemAction
+  logSystemAction,
+  onCreateBlend
 }: BlendModuleProps) {
   const [blendName, setBlendName] = useState('');
   const [batchNo, setBatchNo] = useState('');
@@ -243,11 +259,9 @@ export default function BlendModule({
     return finalBlendName;
   };
 
-  const confirmSubmitBlend = () => {
+  const confirmSubmitBlend = async () => {
     setShowPreviewModal(false);
     const finalBatchNo = `BLEND-LV-${batchNo}`;
-
-    const finalBlendName = getGeneratedBlendName();
 
     const lotsUsedArray = Object.keys(selectedLots).map(id => {
       const l = looseInventory.find(i => i.id === id);
@@ -264,75 +278,96 @@ export default function BlendModule({
       };
     }).filter(Boolean) as BlendProcess['lotsUsed'];
 
-    const newBlend: BlendProcess = {
-      id: editedBlendId || 'BLD-' + Date.now().toString().slice(-6),
-      blendName: finalBlendName,
-      batchNo: finalBatchNo,
-      totalQuantity: totalBlendWeight,
-      status: 'PENDING',
-      date: new Date().toISOString().split('T')[0],
-      lotsUsed: lotsUsedArray
-    };
+    const targetBlendName = getGeneratedBlendName();
+    const targetBlendId = editedBlendId || 'BLD-' + Date.now().toString().slice(-6);
 
-    setLooseInventory(prev => {
-      // 1. Add back the original lots
-      const intermediate = prev.map(lot => {
-        const origQty = originalLotsUsed[lot.id];
-        if (origQty) {
-          if (lot.id.startsWith('l-')) {
-            return { ...lot, weight: lot.weight + origQty };
-          } else {
-            return { ...lot, bags: lot.bags + origQty, weight: lot.weight + (origQty * lot.weightPerBag) };
-          }
-        }
-        return lot;
+    // If server action is available, persist ACID blend transaction to Supabase
+    if (onCreateBlend) {
+      const res = await onCreateBlend({
+        blendId: targetBlendId,
+        blendName: targetBlendName,
+        batchNo: finalBatchNo,
+        date: new Date().toISOString().split('T')[0],
+        totalQuantity: totalBlendWeight,
+        lots: lotsUsedArray.map(l => ({
+          lotId: l.lotId || '',
+          lotNumber: l.lotNumber,
+          mark: l.mark,
+          grade: l.grade,
+          bagsUsed: l.bagsUsed,
+          weightUsed: l.weightUsed
+        }))
       });
 
-      // 2. Deduct the new selected lots
-      return intermediate.map(lot => {
-        if (selectedLots[lot.id]) {
-          if (lot.id.startsWith('l-')) {
-            const weightToDeduct = selectedLots[lot.id];
-            return { ...lot, weight: Math.max(0, lot.weight - weightToDeduct) };
-          } else {
-            const bagsToDeduct = selectedLots[lot.id];
-            const weightToDeduct = getLotCalculatedWeight(lot, bagsToDeduct);
-            return {
-              ...lot,
-              bags: Math.max(0, lot.bags - bagsToDeduct),
-              weight: Math.max(0, lot.weight - weightToDeduct)
-            };
-          }
-        }
-        return lot;
-      });
-    });
+      if (!res.success) {
+        return; // Toast error handled in parent
+      }
 
-    setUnderProcess(prev => {
-      const filtered = editedBlendId ? prev.filter(b => b.id !== editedBlendId) : prev;
-      return [newBlend, ...filtered];
-    });
+      const createdBlend: BlendProcess = {
+        id: res.blendId || targetBlendId,
+        blendName: targetBlendName,
+        batchNo: finalBatchNo,
+        totalQuantity: totalBlendWeight,
+        status: 'PENDING',
+        date: new Date().toISOString().split('T')[0],
+        lotsUsed: lotsUsedArray
+      };
 
-    // Log history of creation or update
-    const creationHistory = {
-      id: `HST-${Date.now()}`,
-      type: editedBlendId ? 'BLEND_UPDATED' : 'BLEND_INITIATED',
-      desc: editedBlendId
-        ? `Updated blend instruction: ${finalBlendName} (${finalBatchNo}).`
-        : `Initiated blend instruction: ${finalBlendName} (${finalBatchNo}) for ${totalBlendWeight.toFixed(2)} kg.`,
-      timestamp: new Date().toISOString(),
-      details: newBlend
-    };
-    setHistoryList((prev: any) => [creationHistory, ...prev]);
-
-    if (editedBlendId) {
-      logSystemAction('EDIT_BLEND', `Re-submitted edited blend: ${finalBlendName} for ${totalBlendWeight.toFixed(2)} kg`);
+      setPrintBlend(createdBlend);
     } else {
-      logSystemAction('CREATE_BLEND', `Created new blend: ${finalBlendName} for ${totalBlendWeight.toFixed(2)} kg`);
-    }
+      // Fallback local state if no server action
+      const newBlend: BlendProcess = {
+        id: targetBlendId,
+        blendName: targetBlendName,
+        batchNo: finalBatchNo,
+        totalQuantity: totalBlendWeight,
+        status: 'PENDING',
+        date: new Date().toISOString().split('T')[0],
+        lotsUsed: lotsUsedArray
+      };
 
-    triggerToast(editedBlendId ? `Blend [${newBlend.id}] successfully updated!` : `Blend [${newBlend.id}] created and sent to printer.`);
-    setPrintBlend(newBlend);
+      setLooseInventory(prev => {
+        // 1. Add back the original lots
+        const intermediate = prev.map(lot => {
+          const origQty = originalLotsUsed[lot.id];
+          if (origQty) {
+            if (lot.id.startsWith('l-')) {
+              return { ...lot, weight: lot.weight + origQty };
+            } else {
+              return { ...lot, bags: lot.bags + origQty, weight: lot.weight + (origQty * lot.weightPerBag) };
+            }
+          }
+          return lot;
+        });
+
+        // 2. Deduct the new selected lots
+        return intermediate.map(lot => {
+          if (selectedLots[lot.id]) {
+            if (lot.id.startsWith('l-')) {
+              const weightToDeduct = selectedLots[lot.id];
+              return { ...lot, weight: Math.max(0, lot.weight - weightToDeduct) };
+            } else {
+              const bagsToDeduct = selectedLots[lot.id];
+              const weightToDeduct = getLotCalculatedWeight(lot, bagsToDeduct);
+              return {
+                ...lot,
+                bags: Math.max(0, lot.bags - bagsToDeduct),
+                weight: Math.max(0, lot.weight - weightToDeduct)
+              };
+            }
+          }
+          return lot;
+        });
+      });
+
+      setUnderProcess(prev => {
+        const filtered = editedBlendId ? prev.filter(b => b.id !== editedBlendId) : prev;
+        return [newBlend, ...filtered];
+      });
+
+      setPrintBlend(newBlend);
+      triggerToast(editedBlendId ? `Blend [${newBlend.id}] successfully updated!` : `Blend [${newBlend.id}] created and sent to printer.`);
+    }
 
     // Reset form after submission
     setEditedBlendId(null);
