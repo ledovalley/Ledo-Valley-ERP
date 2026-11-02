@@ -2,8 +2,8 @@
 
 import { createClient, getCachedUser } from '@/utils/supabase/server';
 import { supabaseAdmin } from '@/utils/supabase/admin';
-import { revalidatePath } from 'next/cache';
 import type { BlendProcess, LooseLot, CatalogProduct } from '@/types/factory';
+import { selectAllPages } from '@/utils/selectAll';
 import { checkDeletePassword } from '@/utils/deletePassword';
 
 // -----------------------------------------------------------------------------
@@ -89,12 +89,16 @@ function fail(err: unknown): { error: string } {
 
 /** Lot ids currently used by blends that are still under process. */
 async function lotIdsInPendingBlends(): Promise<Set<string>> {
-  const { data, error } = await supabaseAdmin
-    .from('factory_blend_lots_used')
-    .select('lot_id, factory_blends!inner(status)')
-    .eq('factory_blends.status', 'PENDING');
-  if (error) throw new Error(error.message);
-  return new Set((data || []).map((r: { lot_id: string | null }) => r.lot_id).filter(Boolean) as string[]);
+  // Must be complete: a lot missing from this set could be purged while a blend still needs it
+  const rows = await selectAllPages<{ lot_id: string | null }>((from, to) =>
+    supabaseAdmin
+      .from('factory_blend_lots_used')
+      .select('id, lot_id, factory_blends!inner(status)')
+      .eq('factory_blends.status', 'PENDING')
+      .order('id', { ascending: true })
+      .range(from, to)
+  );
+  return new Set(rows.map(r => r.lot_id).filter(Boolean) as string[]);
 }
 
 // -----------------------------------------------------------------------------
@@ -102,19 +106,28 @@ async function lotIdsInPendingBlends(): Promise<Set<string>> {
 // -----------------------------------------------------------------------------
 export async function fetchLooseLots(): Promise<LooseLot[]> {
   await enforceFactoryAccess();
+  return loadLooseLots();
+}
+
+async function loadLooseLots(): Promise<LooseLot[]> {
   const supabase = await createClient();
 
-  const { data, error } = await supabase
-    .from('factory_loose_lots')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  if (error) {
+  let data: any[];
+  try {
+    data = await selectAllPages((from, to) =>
+      supabase
+        .from('factory_loose_lots')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
+  } catch (error) {
     console.error('Error fetching loose lots:', error);
     throw new Error('Could not load loose tea stock. Please refresh.');
   }
 
-  return (data || []).map(row => ({
+  return data.map(row => ({
     id: row.id,
     lotNumber: row.lot_number,
     grade: row.grade,
@@ -129,19 +142,28 @@ export async function fetchLooseLots(): Promise<LooseLot[]> {
 
 export async function fetchPacketCatalog(): Promise<CatalogProduct[]> {
   await enforceFactoryAccess();
+  return loadPacketCatalog();
+}
+
+async function loadPacketCatalog(): Promise<CatalogProduct[]> {
   const supabase = await createClient();
 
-  const { data, error } = await supabase
-    .from('factory_packet_catalog')
-    .select('*')
-    .order('name', { ascending: true });
-
-  if (error) {
+  let data: any[];
+  try {
+    data = await selectAllPages((from, to) =>
+      supabase
+        .from('factory_packet_catalog')
+        .select('*')
+        .order('name', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
+  } catch (error) {
     console.error('Error fetching factory packet catalog:', error);
     throw new Error('Could not load the packet catalog. Please refresh.');
   }
 
-  return (data || []).map(row => ({
+  return data.map(row => ({
     id: row.id,
     name: row.name,
     unit: row.unit || 'KG',
@@ -154,23 +176,32 @@ export async function fetchPacketCatalog(): Promise<CatalogProduct[]> {
 
 export async function fetchUnderProcessBlends(): Promise<BlendProcess[]> {
   await enforceFactoryAccess();
+  return loadUnderProcessBlends();
+}
+
+async function loadUnderProcessBlends(): Promise<BlendProcess[]> {
   const supabase = await createClient();
 
-  const { data: blends, error } = await supabase
-    .from('factory_blends')
-    .select(`
-      id, blend_name, batch_no, date, total_quantity, status, created_at, serial_no,
-      factory_blend_lots_used ( lot_id, lot_number, mark, grade, labels, bags_used, weight_used )
-    `)
-    .eq('status', 'PENDING')
-    .order('created_at', { ascending: false });
-
-  if (error) {
+  let blends: any[];
+  try {
+    blends = await selectAllPages((from, to) =>
+      supabase
+        .from('factory_blends')
+        .select(`
+          id, blend_name, batch_no, date, total_quantity, status, created_at, serial_no,
+          factory_blend_lots_used ( lot_id, lot_number, mark, grade, labels, bags_used, weight_used )
+        `)
+        .eq('status', 'PENDING')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
+  } catch (error) {
     console.error('Error fetching blends:', error);
     throw new Error('Could not load blends under process. Please refresh.');
   }
 
-  return (blends || []).map(b => ({
+  return blends.map(b => ({
     id: b.id,
     blendName: b.blend_name,
     batchNo: b.batch_no,
@@ -195,6 +226,10 @@ export async function fetchUnderProcessBlends(): Promise<BlendProcess[]> {
 
 export async function fetchFactoryHistory(limit: number = 300, offset: number = 0) {
   await enforceFactoryAccess();
+  return loadFactoryHistory(limit, offset);
+}
+
+async function loadFactoryHistory(limit: number = 300, offset: number = 0): Promise<any[]> {
   const supabase = await createClient();
 
   const safeLimit = Math.min(Math.max(1, Math.floor(limit) || 300), 2000);
@@ -212,6 +247,31 @@ export async function fetchFactoryHistory(limit: number = 300, offset: number = 
   }
 
   return data || [];
+}
+
+/**
+ * Everything the factory screen shows, in ONE request: one access check, and all
+ * reads run at the same time on the server. Used to refresh the screen after a
+ * change. (Calling the five fetch actions separately from the browser runs them
+ * one after another, each with its own login check, which is what made every
+ * edit and delete slow.)
+ */
+export async function fetchFactoryState(): Promise<{
+  lots: LooseLot[];
+  blends: BlendProcess[];
+  history: any[];
+  products: CatalogProduct[];
+  missingSerials: string[];
+}> {
+  await enforceFactoryAccess();
+  const [lots, blends, history, products, missingSerials] = await Promise.all([
+    loadLooseLots(),
+    loadUnderProcessBlends(),
+    loadFactoryHistory(),
+    loadPacketCatalog(),
+    loadMissingSerials()
+  ]);
+  return { lots, blends, history, products, missingSerials };
 }
 
 export type LotUsageRow = {
@@ -262,12 +322,15 @@ export async function fetchLotUsage(
     await enforceFactoryAccess();
     const supabase = await createClient();
 
-    const { data, error } = await supabase
-      .from('factory_blend_lots_used')
-      .select('blend_id, bags_used, weight_used, factory_blends!inner(id, blend_name, batch_no, status, date, created_at, updated_at)')
-      .eq('lot_id', required(lotId, 'Lot'));
-
-    if (error) return { error: error.message };
+    const usageLotId = required(lotId, 'Lot');
+    const data = await selectAllPages((from, to) =>
+      supabase
+        .from('factory_blend_lots_used')
+        .select('id, blend_id, bags_used, weight_used, factory_blends!inner(id, blend_name, batch_no, status, date, created_at, updated_at)')
+        .eq('lot_id', usageLotId)
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
 
     const byBlend = new Map<string, LotUsageRow & { createdAt: string }>();
     for (const row of (data || []) as any[]) {
@@ -301,13 +364,16 @@ export async function fetchLotUsage(
 
     // --- Stock reconciliation from the full history (not just the recent 300 rows)
     const q = `"${lotId.replace(/"/g, '')}"`;
-    const { data: events, error: histErr } = await supabase
-      .from('factory_history')
-      .select('type, timestamp, description, user_name, details')
-      .in('type', ['LOT_ADDED', 'LOT_STOCK_CORRECTED', 'LEDGER_ADJUSTMENT'])
-      .or(`details->>id.eq.${q},details->>lotId.eq.${q},details->>target_id.eq.${q}`)
-      .order('timestamp', { ascending: true });
-    if (histErr) return { error: histErr.message };
+    const events = await selectAllPages((from, to) =>
+      supabase
+        .from('factory_history')
+        .select('id, type, timestamp, description, user_name, details')
+        .in('type', ['LOT_ADDED', 'LOT_STOCK_CORRECTED', 'LEDGER_ADJUSTMENT'])
+        .or(`details->>id.eq.${q},details->>lotId.eq.${q},details->>target_id.eq.${q}`)
+        .order('timestamp', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
 
     let receivedKg: number | null = null;
     let receivedAt: string | null = null;
@@ -344,13 +410,16 @@ export async function fetchLotUsage(
       const returnFilter = lotId === 'l-balance'
         ? `details->>returnLotId.eq.${q},details->>returnLotId.is.null`
         : `details->>returnLotId.eq.${q}`;
-      const { data: packs, error: packErr } = await supabase
-        .from('factory_history')
-        .select('details')
-        .eq('type', 'BLEND_PACKED')
-        .or(returnFilter);
-      if (packErr) return { error: packErr.message };
-      returnsKg = (packs || []).reduce((sum: number, p: any) => sum + (Number(p.details?.returnedLooseWeight) || 0), 0);
+      const packs = await selectAllPages((from, to) =>
+        supabase
+          .from('factory_history')
+          .select('id, details')
+          .eq('type', 'BLEND_PACKED')
+          .or(returnFilter)
+          .order('id', { ascending: true })
+          .range(from, to)
+      );
+      returnsKg = packs.reduce((sum: number, p: any) => sum + (Number(p.details?.returnedLooseWeight) || 0), 0);
     }
 
     const usedKg = rows.reduce((sum, r) => sum + r.weightUsed, 0);
@@ -377,16 +446,27 @@ export async function fetchLotUsage(
  * highest serial. Computed from the whole database, not just recent history.
  */
 export async function fetchMissingSerials(): Promise<string[]> {
-  const { role } = await enforceFactoryAccess();
-  if (!['admin', 'manager'].includes(role)) return [];
+  await enforceFactoryAccess();
+  return loadMissingSerials();
+}
 
-  const { data, error } = await supabaseAdmin.from('factory_issued_serials').select('serial_no');
-  if (error) {
+async function loadMissingSerials(): Promise<string[]> {
+
+  let data: { serial_no: number }[];
+  try {
+    data = await selectAllPages<{ serial_no: number }>((from, to) =>
+      supabaseAdmin
+        .from('factory_issued_serials')
+        .select('serial_no')
+        .order('serial_no', { ascending: true })
+        .range(from, to)
+    );
+  } catch (error) {
     console.error('Error fetching issued serials:', error);
     return [];
   }
 
-  const issued = new Set<number>((data || []).map((r: { serial_no: number }) => Number(r.serial_no)));
+  const issued = new Set<number>(data.map(r => Number(r.serial_no)));
   const max = issued.size ? Math.max(...issued) : 0;
   const missing: string[] = [];
   for (let i = 1; i <= max; i++) {
@@ -441,7 +521,6 @@ export async function savePacketProduct(product: {
         userName,
         details: { productId: id, ...fields }
       });
-      revalidatePath('/factory');
       return { success: true, id };
     }
 
@@ -493,7 +572,6 @@ export async function savePacketProduct(product: {
       details: { productId: product.id, ...fields }
     });
 
-    revalidatePath('/factory');
     return { success: true, id: product.id, stock };
   } catch (err) {
     return fail(err);
@@ -530,7 +608,6 @@ export async function deletePacketProduct(productId: string, deletePassword: str
       details: { productId, productName: deleted.name, stockAtDeletion: Number(deleted.stock) }
     });
 
-    revalidatePath('/factory');
     return { success: true };
   } catch (err) {
     return fail(err);
@@ -559,7 +636,6 @@ export async function receivePacketStock(data: {
     });
     if (error) return { error: error.message };
 
-    revalidatePath('/factory');
     return { success: true, newStock: Number(newStock) };
   } catch (err) {
     return fail(err);
@@ -610,7 +686,6 @@ export async function receiveLooseLot(lot: {
       details: payload
     });
 
-    revalidatePath('/factory');
     return { success: true, lotId };
   } catch (err) {
     return fail(err);
@@ -706,7 +781,6 @@ export async function updateLooseLot(
       }
     });
 
-    revalidatePath('/factory');
     return {
       success: true,
       lot: {
@@ -761,7 +835,6 @@ export async function deleteLooseLot(lotId: string, deletePassword: string): Pro
       details: { deletedLot: deleted }
     });
 
-    revalidatePath('/factory');
     return { success: true };
   } catch (err) {
     return fail(err);
@@ -779,13 +852,15 @@ export async function purgeNilLooseLots(deletePassword: string): Promise<ActionR
       return { error: 'Only admins and managers can purge empty stock.' };
     }
 
-    const { data: candidates, error: fetchErr } = await supabaseAdmin
-      .from('factory_loose_lots')
-      .select('id, lot_number, mark, bags, weight')
-      .lte('weight', 0)
-      .not('id', 'in', `(${SYSTEM_LOT_IDS.join(',')})`);
-
-    if (fetchErr) return { error: fetchErr.message };
+    const candidates = await selectAllPages((from, to) =>
+      supabaseAdmin
+        .from('factory_loose_lots')
+        .select('id, lot_number, mark, bags, weight')
+        .lte('weight', 0)
+        .not('id', 'in', `(${SYSTEM_LOT_IDS.join(',')})`)
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
 
     const inUse = await lotIdsInPendingBlends();
     type LotRow = { id: string; lot_number: string; mark: string };
@@ -797,26 +872,32 @@ export async function purgeNilLooseLots(deletePassword: string): Promise<ActionR
 
     const ids = lotsToDelete.map(l => l.id);
 
-    // Re-check weight in the delete itself, in case stock was added meanwhile
-    const { data: deleted, error: deleteErr } = await supabaseAdmin
-      .from('factory_loose_lots')
-      .delete()
-      .in('id', ids)
-      .lte('weight', 0)
-      .select('id, lot_number, mark');
+    // Delete in chunks (a long id list doesn't fit in one request), re-checking the
+    // weight in the delete itself in case stock was added meanwhile
+    const deleted: LotRow[] = [];
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: chunk, error: deleteErr } = await supabaseAdmin
+        .from('factory_loose_lots')
+        .delete()
+        .in('id', ids.slice(i, i + 200))
+        .lte('weight', 0)
+        .select('id, lot_number, mark');
+      if (deleteErr) {
+        if (deleted.length === 0) return { error: deleteErr.message };
+        break; // record what was already deleted below
+      }
+      deleted.push(...((chunk || []) as LotRow[]));
+    }
 
-    if (deleteErr) return { error: deleteErr.message };
-
-    const count = deleted?.length ?? 0;
+    const count = deleted.length;
     await writeHistory({
       type: 'NIL_STOCK_PURGED',
       description: `Purged ${count} empty loose tea lots.`,
       userId: user.id,
       userName,
-      details: { count, lots: ((deleted || []) as LotRow[]).map(l => `${l.mark} (${l.lot_number})`) }
+      details: { count, lots: deleted.map(l => `${l.mark} (${l.lot_number})`) }
     });
 
-    revalidatePath('/factory');
     return { success: true, count };
   } catch (err) {
     return fail(err);
@@ -842,7 +923,6 @@ export async function adjustLedgerLot(targetId: string, amount: number, reason: 
     });
     if (error) return { error: error.message };
 
-    revalidatePath('/factory');
     return { success: true, newWeight: Number(newWeight) };
   } catch (err) {
     return fail(err);
@@ -892,7 +972,6 @@ export async function createFactoryBlend(data: {
 
     if (error) return { error: error.message };
 
-    revalidatePath('/factory');
     return {
       success: true,
       blendId,
@@ -922,7 +1001,6 @@ export async function updateFactoryBlend(data: {
 
     if (error) return { error: error.message };
 
-    revalidatePath('/factory');
     return {
       success: true,
       blendName: result?.blendName ?? data.blendName,
@@ -959,7 +1037,6 @@ export async function finalizeFactoryBlend(data: {
 
     if (error) return { error: error.message };
 
-    revalidatePath('/factory');
     return { success: true, totalOutputQuantity: Number(result?.totalOutputQuantity ?? 0) };
   } catch (err) {
     return fail(err);
@@ -983,7 +1060,6 @@ export async function mergeFactoryBlends(blendIds: string[]): Promise<ActionResu
 
     if (error) return { error: error.message };
 
-    revalidatePath('/factory');
     return {
       success: true,
       blendId: newBlendId,
@@ -1012,7 +1088,6 @@ export async function deleteFactoryBlend(blendId: string, deletePassword: string
 
     if (error) return { error: error.message };
 
-    revalidatePath('/factory');
     return { success: true };
   } catch (err) {
     return fail(err);
@@ -1282,7 +1357,6 @@ export async function applyStockTake(
     });
     if (error) return { error: error.message };
 
-    revalidatePath('/factory');
     return { success: true, summary: data || {} };
   } catch (err) {
     return fail(err);

@@ -13,6 +13,7 @@ export const BACKUP_TABLES = [
   'factory_blend_lots_used',
   'factory_history',
   'factory_serial_counter',
+  'factory_serial_log',
   'factory_stock_takes',
   'factory_stock_take_counts',
   // sales & ERP
@@ -40,16 +41,22 @@ function isMissingTable(message: string, code?: string) {
   return code === '42P01' || code === 'PGRST205' || /does not exist|could not find the table/i.test(message);
 }
 
+/** Unique column to page by, for tables whose key isn't "id". */
+const ORDER_COLUMN: Record<string, string> = {
+  factory_serial_log: 'serial_no'
+};
+
 async function dumpTable(table: string): Promise<{ rows: unknown[] } | { skipped: string }> {
   const rows: unknown[] = [];
   let ordered = true;
+  const orderColumn = ORDER_COLUMN[table] || 'id';
   for (let from = 0; ; from += 1000) {
     // Page through with a stable order so no row is missed or repeated
     let query = supabaseAdmin.from(table).select('*').range(from, from + 999);
-    if (ordered) query = query.order('id', { ascending: true });
+    if (ordered) query = query.order(orderColumn, { ascending: true });
     let { data, error } = await query;
 
-    if (error && ordered && /column .*id.* does not exist/i.test(error.message)) {
+    if (error && ordered && /column .* does not exist/i.test(error.message)) {
       ordered = false;
       ({ data, error } = await supabaseAdmin.from(table).select('*').range(from, from + 999));
     }

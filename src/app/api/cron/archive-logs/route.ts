@@ -23,7 +23,7 @@ export async function GET(request: Request) {
       .select('*')
       .lt('created_at', cutoff)
       .order('created_at', { ascending: true })
-      .limit(5000);
+      .limit(1000); // Supabase returns at most 1,000 rows; the rest go in the next run
 
     if (fetchError) throw fetchError;
 
@@ -60,9 +60,12 @@ export async function GET(request: Request) {
       if (recordError) throw recordError;
 
       // 5. Only now delete the archived logs
+      // (in batches: a long id list doesn't fit in one request)
       const idsToDelete = oldLogs.map((l: any) => l.id);
-      const { error: deleteError } = await supabaseAdmin.from('logs').delete().in('id', idsToDelete);
-      if (deleteError) throw deleteError;
+      for (let i = 0; i < idsToDelete.length; i += 200) {
+        const { error: deleteError } = await supabaseAdmin.from('logs').delete().in('id', idsToDelete.slice(i, i + 200));
+        if (deleteError) throw deleteError;
+      }
       archived = oldLogs.length;
     }
 

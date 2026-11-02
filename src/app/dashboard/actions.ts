@@ -2,6 +2,7 @@
 
 import { createClient } from '@/utils/supabase/server'
 import { supabaseAdmin } from '@/utils/supabase/admin'
+import { selectAllPages } from '@/utils/selectAll'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 
@@ -352,29 +353,28 @@ export async function fetchEmployeeAuditLedger(targetUserId?: string) {
     ? (targetUserId || null) 
     : user?.id
 
-  let shiftsQuery = supabase.from('shifts').select('*').order('created_at', { ascending: false })
-  let salesQuery = supabase.from('sales_records').select('*')
-  let visitsQuery = supabase.from('retailer_visits').select('*')
-  let retailersQuery = supabase.from('retailers').select('*')
+  // Every row is loaded (page by page past Supabase's 1,000-row limit), and a failed
+  // load stops with an error instead of showing incomplete totals or ₹0 payouts.
+  const loadAll = (table: string, ownerColumn: string, newestFirst = false) =>
+    selectAllPages((from, to) => {
+      let query = supabase.from(table).select('*')
+      if (newestFirst) query = query.order('created_at', { ascending: false })
+      query = query.order('id', { ascending: true })
+      if (effectiveUserId) query = query.eq(ownerColumn, effectiveUserId)
+      return query.range(from, to)
+    })
 
-  if (effectiveUserId) {
-    shiftsQuery = shiftsQuery.eq('user_id', effectiveUserId)
-    salesQuery = salesQuery.eq('sales_person_id', effectiveUserId)
-    visitsQuery = visitsQuery.eq('sales_person_id', effectiveUserId)
-    retailersQuery = retailersQuery.eq('sales_person_id', effectiveUserId)
+  let shifts: any[], sales: any[], visits: any[], retailers: any[]
+  try {
+    ;[shifts, sales, visits, retailers] = await Promise.all([
+      loadAll('shifts', 'user_id', true),
+      loadAll('sales_records', 'sales_person_id'),
+      loadAll('retailer_visits', 'sales_person_id'),
+      loadAll('retailers', 'sales_person_id')
+    ])
+  } catch (err) {
+    throw new Error(`Could not load the ledger completely, so no totals are shown: ${err instanceof Error ? err.message : String(err)}. Please refresh.`)
   }
-
-  const [shiftsRes, salesRes, visitsRes, retailersRes] = await Promise.all([
-    shiftsQuery,
-    salesQuery,
-    visitsQuery,
-    retailersQuery
-  ])
-
-  const shifts = shiftsRes.data || []
-  const sales = salesRes.data || []
-  const visits = visitsRes.data || []
-  const retailers = retailersRes.data || []
 
   // Aggregate metrics
   const totalKmDriven = shifts.reduce((acc, curr) => acc + (Number(curr.total_distance) || 0), 0)
@@ -471,17 +471,18 @@ export async function fetchDashboardTargetsProgress(targetMonth?: string): Promi
   const nextMonthNum = monthNum === 12 ? 1 : monthNum + 1
   const endDate = `${nextMonthYear}-${String(nextMonthNum).padStart(2, '0')}-01`
 
-  let salesQuery = supabaseAdmin
-    .from('sales_records')
-    .select('id, amount, retailer_id, date, created_at, sales_person_id')
-    .gte('date', startDate)
-    .lt('date', endDate)
-
-  if (!isManagement && user) {
-    salesQuery = salesQuery.eq('sales_person_id', user.id)
-  }
-
-  const { data: salesRecords } = await salesQuery
+  const salesRecords = await selectAllPages((from, to) => {
+    let salesQuery = supabaseAdmin
+      .from('sales_records')
+      .select('id, amount, retailer_id, date, created_at, sales_person_id')
+      .gte('date', startDate)
+      .lt('date', endDate)
+      .order('id', { ascending: true })
+    if (!isManagement && user) {
+      salesQuery = salesQuery.eq('sales_person_id', user.id)
+    }
+    return salesQuery.range(from, to)
+  })
 
   let actualSales = 0
   let actualOrders = 0
@@ -529,21 +530,23 @@ export async function fetchExactTerritoryDistribution(): Promise<TerritoryDistri
     const userRole = (user?.app_metadata?.role || '').toLowerCase()
     const isManagement = ['admin', 'manager'].includes(userRole)
 
-    let shiftsQuery = supabaseAdmin
-      .from('shifts')
-      .select('territory, total_order_value, orders_count, visits_count')
-
-    let retailersQuery = supabaseAdmin
-      .from('retailers')
-      .select('territory')
-
-    if (!isManagement && user?.id) {
-      shiftsQuery = shiftsQuery.eq('user_id', user.id)
-      retailersQuery = retailersQuery.eq('sales_person_id', user.id)
-    }
-
-    const { data: shifts } = await shiftsQuery
-    const { data: retailers } = await retailersQuery
+    const ownOnly = !isManagement && !!user?.id
+    const shifts = await selectAllPages((from, to) => {
+      let shiftsQuery = supabaseAdmin
+        .from('shifts')
+        .select('id, territory, total_order_value, orders_count, visits_count')
+        .order('id', { ascending: true })
+      if (ownOnly) shiftsQuery = shiftsQuery.eq('user_id', user!.id)
+      return shiftsQuery.range(from, to)
+    })
+    const retailers = await selectAllPages((from, to) => {
+      let retailersQuery = supabaseAdmin
+        .from('retailers')
+        .select('id, territory')
+        .order('id', { ascending: true })
+      if (ownOnly) retailersQuery = retailersQuery.eq('sales_person_id', user!.id)
+      return retailersQuery.range(from, to)
+    })
 
     const map = new Map<string, { revenue: number; orders: number; count: number }>()
 
@@ -819,16 +822,17 @@ export async function fetchWeeklyProgressData(): Promise<WeeklyProgressResponse>
     const sunday = new Date(now)
     sunday.setDate(now.getDate() - dayOfWeek)
 
-    let shiftsQuery = supabaseAdmin.from('shifts').select('*')
-    let salesQuery = supabaseAdmin.from('sales_records').select('*')
-
-    if (!isManagement && userId) {
-      shiftsQuery = shiftsQuery.eq('user_id', userId)
-      salesQuery = salesQuery.eq('sales_person_id', userId)
-    }
-
-    const { data: shifts } = await shiftsQuery
-    const { data: sales } = await salesQuery
+    const ownOnly = !isManagement && !!userId
+    const shifts = await selectAllPages((from, to) => {
+      let shiftsQuery = supabaseAdmin.from('shifts').select('*').order('id', { ascending: true })
+      if (ownOnly) shiftsQuery = shiftsQuery.eq('user_id', userId)
+      return shiftsQuery.range(from, to)
+    })
+    const sales = await selectAllPages((from, to) => {
+      let salesQuery = supabaseAdmin.from('sales_records').select('*').order('id', { ascending: true })
+      if (ownOnly) salesQuery = salesQuery.eq('sales_person_id', userId)
+      return salesQuery.range(from, to)
+    })
 
     const daysLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
     const fullDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']

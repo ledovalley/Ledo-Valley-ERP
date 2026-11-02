@@ -14,6 +14,8 @@
 //
 // How it restores: every row in the backup is written back (insert, or overwrite
 // the row with the same id). Rows created AFTER the backup are NOT deleted.
+// History and the serial log are permanent records: missing rows are added,
+// existing ones are left as they are. The serial counter never goes backwards.
 // Take a fresh backup before restoring so you can undo.
 
 import { readFileSync } from 'node:fs'
@@ -30,7 +32,7 @@ const onlyTables = (args.find(a => a.startsWith('--tables=')) || '').replace('--
 // Parents before children, so links between tables resolve
 const ORDER = [
   'factory_loose_lots', 'factory_packet_catalog', 'factory_blends', 'factory_blend_lots_used',
-  'factory_history', 'factory_serial_counter', 'factory_stock_takes', 'factory_stock_take_counts',
+  'factory_history', 'factory_serial_counter', 'factory_serial_log', 'factory_stock_takes', 'factory_stock_take_counts',
   'products', 'retailers', 'shifts', 'sales_records', 'retailer_visits',
   'employee_targets', 'daily_operational_targets', 'logs', 'log_archives'
 ]
@@ -84,12 +86,25 @@ const { createClient } = await import('@supabase/supabase-js')
 const supabase = createClient(url, key, { auth: { persistSession: false } })
 let failed = false
 
+// Permanent records (the database refuses changes to existing rows): add missing rows only
+const APPEND_ONLY = { factory_history: 'id', factory_serial_log: 'serial_no' }
+
 for (const t of tables) {
-  const rows = backup.tables[t]
+  let rows = backup.tables[t]
+
+  // Never move the serial counter backwards, or new blends would reuse numbers
+  if (t === 'factory_serial_counter') {
+    const { data: cur, error: curErr } = await supabase.from(t).select('id, last_serial').eq('id', 1).maybeSingle()
+    if (curErr) { console.error(`  ${t}: FAILED reading current value: ${curErr.message}`); failed = true; continue }
+    if (cur) rows = rows.map(r => ({ ...r, last_serial: Math.max(Number(r.last_serial) || 0, Number(cur.last_serial) || 0) }))
+  }
+
   let done = 0
   for (let i = 0; i < rows.length; i += 500) {
     const batch = rows.slice(i, i + 500)
-    const { error } = await supabase.from(t).upsert(batch)
+    const { error } = APPEND_ONLY[t]
+      ? await supabase.from(t).upsert(batch, { onConflict: APPEND_ONLY[t], ignoreDuplicates: true })
+      : await supabase.from(t).upsert(batch)
     if (error) {
       console.error(`  ${t}: FAILED at rows ${i + 1}-${i + batch.length}: ${error.message}`)
       failed = true

@@ -19,8 +19,13 @@ To empty the factory data (keeps tables, users and settings):
 TRUNCATE public.factory_stock_take_counts, public.factory_stock_takes,
          public.factory_blend_lots_used, public.factory_blends,
          public.factory_history, public.factory_loose_lots,
-         public.factory_packet_catalog;
+         public.factory_packet_catalog, public.factory_serial_log;
+-- Restart serial numbers at SL-01. Without this, the first new blend continues
+-- from the old number and every earlier number shows up in Gap Analysis.
+UPDATE public.factory_serial_counter SET last_serial = 0;
 ```
+
+(`factory_serial_log` exists once `20261103_gap_analysis_and_safety.sql` has been run.)
 
 Add `public.sales_records, public.retailer_visits, public.shifts` (and others) only
 if you also want to clear sales data. Re-create your system ledger lots
@@ -29,10 +34,11 @@ if you also want to clear sales data. Re-create your system ledger lots
 ## Apply in this order
 
 1. **Back up** (Supabase > Database > Backups), even before wiping.
-2. **Run the new migration** in the Supabase SQL editor:
-   `supabase/migrations/20261102_review_fixes.sql`.
+2. **Run the new migrations** in the Supabase SQL editor, in order:
+   `supabase/migrations/20261102_review_fixes.sql`, then
+   `supabase/migrations/20261103_gap_analysis_and_safety.sql`.
    Your database has already run the earlier ones. On a brand-new database, run all
-   six files in name order. It is safe to run twice.
+   seven files in name order. Each is safe to run twice.
 3. **Check roles and pay.** The migration copies each user's pay settings to the
    protected place. Look over everyone once, since a user could have changed their own
    values before this fix:
@@ -117,3 +123,29 @@ Refresh the page after every step and check the numbers in Supabase match the sc
   shows no new errors compared with the original code.
 - **Not run:** `npm run build`, `npm run lint`, or the screens in a browser (packages can't be
   installed in the review workspace). Do step 6 and the test list above before real use.
+
+## Later fixes
+
+- **Lists over 1,000 rows** (`factory/actions.ts`): Supabase returns at most 1,000 rows
+  per request, so Inventory, packet products, blends under process, a lot's audit trail,
+  Gap Analysis and Purge NIL stock silently left rows out past that. They now load page
+  by page; Purge deletes in batches of 200.
+- **Gap Analysis** (`20261103_gap_analysis_and_safety.sql`): each serial is written to a permanent
+  `factory_serial_log` when it's issued (by a database trigger), so merged, finalized or
+  deleted blends never show as gaps. The log can't be edited or deleted from.
+- **Database guards** (same migration). The database itself now refuses, whoever asks
+  (the app, a bug, or a click in the Supabase table editor):
+  - deleting a lot used by a blend under process;
+  - deleting a finalized (packed) blend;
+  - changing or deleting any history row.
+  `TRUNCATE` (for a deliberate wipe) still works.
+- **Sales lists over 1,000 rows** (`dashboard/actions.ts`, `sales/actions.ts`): the payout
+  ledger, monthly target progress, weekly progress, territory split, and the sales and
+  retailer lists now load every row. The payout ledger shows an error instead of
+  incomplete totals or ₹0 if loading fails.
+- **Backups** include the serial log. Restore never changes existing history rows and never
+  moves the serial counter backwards.
+- **Log archive** deletes archived logs in batches of 200.
+- **Faster factory screen**: after any change, the screen reloads its data in one request
+  (`fetchFactoryState`) instead of five one-after-another, and no longer rebuilds the whole
+  page as well. Saving itself is unchanged.

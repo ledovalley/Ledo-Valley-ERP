@@ -3,6 +3,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { isSessionValid } from '@/app/dashboard/actions'
+import { selectAllPages } from '@/utils/selectAll'
 
 // Retailer Actions
 export async function fetchRetailers() {
@@ -11,18 +12,18 @@ export async function fetchRetailers() {
   const role = (user?.app_metadata?.role || '').toLowerCase()
 
   // Admins & managers see all, other staff see only theirs
-  let query = supabase.from('retailers').select('*').order('created_at', { ascending: false })
-  
-  if (role !== 'admin' && role !== 'manager') {
-    query = query.eq('sales_person_id', user?.id)
-  }
-
-  const { data, error } = await query
-  if (error) {
-    console.error("Fetch Retailers Error:", error.message)
+  const ownOnly = role !== 'admin' && role !== 'manager'
+  try {
+    return await selectAllPages((from, to) => {
+      let query = supabase.from('retailers').select('*')
+        .order('created_at', { ascending: false }).order('id', { ascending: true })
+      if (ownOnly) query = query.eq('sales_person_id', user?.id)
+      return query.range(from, to)
+    })
+  } catch (error) {
+    console.error("Fetch Retailers Error:", error)
     return []
   }
-  return data || []
 }
 
 export async function createRetailer(formData: FormData) {
@@ -129,21 +130,20 @@ export async function fetchSalesRecords() {
   const { data: { user } } = await supabase.auth.getUser()
   const role = (user?.app_metadata?.role || '').toLowerCase()
 
-  let query = supabase.from('sales_records').select(`
-    *,
-    retailers (id, name, shop_name, territory, address, phone, geo_location)
-  `).order('created_at', { ascending: false })
-  
-  if (role !== 'admin' && role !== 'manager') {
-    query = query.eq('sales_person_id', user?.id)
-  }
-
-  const { data, error } = await query
-  if (error) {
-    console.error("Fetch Sales Error:", error.message)
+  const ownOnly = role !== 'admin' && role !== 'manager'
+  try {
+    return await selectAllPages((from, to) => {
+      let query = supabase.from('sales_records').select(`
+        *,
+        retailers (id, name, shop_name, territory, address, phone, geo_location)
+      `).order('created_at', { ascending: false }).order('id', { ascending: true })
+      if (ownOnly) query = query.eq('sales_person_id', user?.id)
+      return query.range(from, to)
+    })
+  } catch (error) {
+    console.error("Fetch Sales Error:", error)
     return []
   }
-  return data || []
 }
 
 export async function createSaleRecord(formData: FormData) {

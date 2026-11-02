@@ -21,11 +21,7 @@ import PasswordConfirmModal from "@/components/ui/PasswordConfirmModal";
 import TopNavbar from "@/components/layout/TopNavbar";
 import { LooseLot, CatalogProduct, BlendProcess, HistoryRecord, SystemUser } from "@/types/factory";
 import {
-  fetchLooseLots,
-  fetchPacketCatalog,
-  fetchUnderProcessBlends,
-  fetchFactoryHistory,
-  fetchMissingSerials,
+  fetchFactoryState,
   receiveLooseLot,
   updateLooseLot,
   deleteLooseLot,
@@ -161,13 +157,8 @@ export default function FactoryDashboardClient({
   // ---------------------------------------------------------------------------
   const reloadAll = async (): Promise<BlendProcess[] | null> => {
     try {
-      const [lots, blends, hist, products, missing] = await Promise.all([
-        fetchLooseLots(),
-        fetchUnderProcessBlends(),
-        fetchFactoryHistory(),
-        fetchPacketCatalog(),
-        fetchMissingSerials()
-      ]);
+      // One request for everything (see fetchFactoryState)
+      const { lots, blends, history: hist, products, missingSerials: missing } = await fetchFactoryState();
       setLooseInventory(lots);
       setUnderProcess(blends);
       setHistoryList(mapHistory(hist));
