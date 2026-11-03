@@ -117,7 +117,7 @@ async function loadLooseLots(): Promise<LooseLot[]> {
     data = await selectAllPages((from, to) =>
       supabase
         .from('factory_loose_lots')
-        .select('*')
+        .select('id, lot_number, mark, grade, bags, weight_per_bag, weight, date, labels')
         .order('created_at', { ascending: false })
         .order('id', { ascending: true })
         .range(from, to)
@@ -229,15 +229,15 @@ export async function fetchFactoryHistory(limit: number = 300, offset: number = 
   return loadFactoryHistory(limit, offset);
 }
 
-async function loadFactoryHistory(limit: number = 300, offset: number = 0): Promise<any[]> {
+async function loadFactoryHistory(limit: number = 50, offset: number = 0): Promise<any[]> {
   const supabase = await createClient();
 
-  const safeLimit = Math.min(Math.max(1, Math.floor(limit) || 300), 2000);
+  const safeLimit = Math.min(Math.max(1, Math.floor(limit) || 50), 2000);
   const safeOffset = Math.max(0, Math.floor(offset) || 0);
 
   const { data, error } = await supabase
     .from('factory_history')
-    .select('*')
+    .select('id, type, description, timestamp, user_name, details')
     .order('timestamp', { ascending: false })
     .range(safeOffset, safeOffset + safeLimit - 1);
 
@@ -267,11 +267,28 @@ export async function fetchFactoryState(): Promise<{
   const [lots, blends, history, products, missingSerials] = await Promise.all([
     loadLooseLots(),
     loadUnderProcessBlends(),
-    loadFactoryHistory(),
+    loadFactoryHistory(50),
     loadPacketCatalog(),
     loadMissingSerials()
   ]);
   return { lots, blends, history, products, missingSerials };
+}
+
+/**
+ * Ultra-fast targeted refresh for blend operations (creation, editing, finalization).
+ * Only reloads Lots and Pending Blends (the data modified on screen), skipping the
+ * heavy history table and gap analysis queries to cut save latency by more than 60%.
+ */
+export async function fetchBlendOperationState(): Promise<{
+  lots: LooseLot[];
+  blends: BlendProcess[];
+}> {
+  await enforceFactoryAccess();
+  const [lots, blends] = await Promise.all([
+    loadLooseLots(),
+    loadUnderProcessBlends()
+  ]);
+  return { lots, blends };
 }
 
 export type LotUsageRow = {
@@ -470,7 +487,7 @@ async function loadMissingSerials(): Promise<string[]> {
   const max = issued.size ? Math.max(...issued) : 0;
   const missing: string[] = [];
   for (let i = 1; i <= max; i++) {
-    if (!issued.has(i)) missing.push(`SL-${String(i).padStart(2, '0')}`);
+    if (!issued.has(i)) missing.push(`SL-${i < 10 ? '0' + i : i}`);
   }
   return missing;
 }

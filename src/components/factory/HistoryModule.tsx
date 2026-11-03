@@ -19,7 +19,7 @@ function mergedSerialsOf(details: any): string[] {
   if (Array.isArray(details.mergedBlends)) {
     return details.mergedBlends
       .map((b: any) => {
-        if (b?.serialNo) return `SL-${String(b.serialNo).padStart(2, '0')}`;
+        if (b?.serialNo) return `SL-${b.serialNo < 10 ? '0' + b.serialNo : b.serialNo}`;
         const m = String(b?.blendName || '').match(/\|\s*SL-(\d+)\s*$/);
         return m ? `SL-${m[1]}` : null;
       })

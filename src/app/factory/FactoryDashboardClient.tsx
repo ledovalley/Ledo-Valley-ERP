@@ -22,6 +22,7 @@ import TopNavbar from "@/components/layout/TopNavbar";
 import { LooseLot, CatalogProduct, BlendProcess, HistoryRecord, SystemUser } from "@/types/factory";
 import {
   fetchFactoryState,
+  fetchBlendOperationState,
   receiveLooseLot,
   updateLooseLot,
   deleteLooseLot,
@@ -175,13 +176,27 @@ export default function FactoryDashboardClient({
     }
   };
 
+  /** Fast refresh for blend operations (only updates lots & pending blends) */
+  const reloadBlendState = async (): Promise<BlendProcess[] | null> => {
+    try {
+      const { lots, blends } = await fetchBlendOperationState();
+      setLooseInventory(lots);
+      setUnderProcess(blends);
+      lastBlendsRef.current = blends;
+      return blends;
+    } catch (err) {
+      return reloadAll();
+    }
+  };
+
   /**
    * Runs a server action, shows its error if any, reloads from the database on
    * success, and only then reports success. Blocks double submission.
    */
   const runAction = async <R extends AnyResult>(
     fn: () => Promise<R>,
-    successMessage?: string | ((res: Ok<R>) => string)
+    successMessage?: string | ((res: Ok<R>) => string),
+    customReload?: () => Promise<any>
   ): Promise<Ok<R> | null> => {
     if (busyRef.current) return null;
     busyRef.current = true;
@@ -193,7 +208,11 @@ export default function FactoryDashboardClient({
         return null;
       }
       const ok = res as Ok<R>;
-      await reloadAll();
+      if (customReload) {
+        await customReload();
+      } else {
+        await reloadAll();
+      }
       if (successMessage) {
         triggerToast(typeof successMessage === "function" ? successMessage(ok) : successMessage);
       }
@@ -376,7 +395,8 @@ export default function FactoryDashboardClient({
       const id = input.editingBlendId;
       const res = await runAction(
         () => updateFactoryBlend({ blendId: id, blendName: input.blendName, lots }),
-        r => `Blend updated: ${r.blendName}.`
+        r => `Blend updated: ${r.blendName}.`,
+        reloadBlendState
       );
       if (!res) return null;
       return lastBlendsRef.current?.find(b => b.id === id) ?? null;
@@ -384,7 +404,8 @@ export default function FactoryDashboardClient({
 
     const res = await runAction(
       () => createFactoryBlend({ blendName: input.blendName, batchNo: input.batchNo, date: input.date, lots }),
-      r => `Blend saved: ${r.blendName}. Sending to printer.`
+      r => `Blend saved: ${r.blendName}. Sending to printer.`,
+      reloadBlendState
     );
     if (!res) return null;
     return lastBlendsRef.current?.find(b => b.id === res.blendId) ?? null;

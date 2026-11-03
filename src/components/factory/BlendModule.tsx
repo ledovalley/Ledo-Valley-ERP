@@ -204,7 +204,10 @@ export default function BlendModule({
   // so two people creating blends at once can never get the same number.
   const getGeneratedBlendName = () => {
     const base = blendName.trim().replace(/\s*\|\s*SL-\d+\s*$/, '');
-    if (editedBlendId && editedSerial) return `${base} | SL-${String(editedSerial).padStart(2, '0')}`;
+    if (editedBlendId && editedSerial) {
+      const serialStr = editedSerial < 10 ? `0${editedSerial}` : String(editedSerial);
+      return `${base} | SL-${serialStr}`;
+    }
     if (editedBlendId) return base;
     return `${base} | SL-(assigned on save)`;
   };
