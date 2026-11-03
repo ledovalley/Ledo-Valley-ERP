@@ -15,3 +15,4 @@ CREATE INDEX IF NOT EXISTS idx_sales_records_delivery_status
 
 CREATE INDEX IF NOT EXISTS idx_sales_records_payment_status
   ON public.sales_records(payment_status);
+

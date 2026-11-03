@@ -1473,11 +1473,11 @@ export default function SalesClient({
                                   type="button"
                                   disabled={isPending}
                                   onClick={() => openCollectPaymentModal(sale)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-[11px] font-bold transition-all shadow-2xs active:scale-95 disabled:opacity-50"
+                                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold transition-all shadow-2xs active:scale-95 disabled:opacity-50 whitespace-nowrap shrink-0"
                                   title="Collect payment for this order"
                                 >
-                                  <IndianRupee className="w-3 h-3 text-emerald-700" />
-                                  <span>Collect ₹</span>
+                                  <IndianRupee className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                                  <span>Collect</span>
                                 </button>
                               )}
 
@@ -1697,11 +1697,11 @@ export default function SalesClient({
                                     type="button"
                                     disabled={isPending}
                                     onClick={() => openCollectPaymentModal(sale)}
-                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold transition-all shadow-2xs hover:shadow-xs disabled:opacity-50"
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold transition-all shadow-2xs hover:shadow-xs disabled:opacity-50 whitespace-nowrap shrink-0"
                                     title="Collect payment"
                                   >
-                                    <IndianRupee className="w-3.5 h-3.5 text-emerald-700" />
-                                    <span>Collect ₹</span>
+                                    <IndianRupee className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                                    <span>Collect</span>
                                   </button>
                                 )}
 
