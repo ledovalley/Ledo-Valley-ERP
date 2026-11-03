@@ -1,7 +1,14 @@
 'use client';
 
 import { useState, useTransition, useMemo, useEffect } from 'react';
-import { createRetailer, updateRetailer, createSaleRecord, logNoOrderVisit } from './actions';
+import { 
+  createRetailer, 
+  updateRetailer, 
+  createSaleRecord, 
+  logNoOrderVisit,
+  updateSaleDeliveryStatus,
+  collectSalePayment
+} from './actions';
 import {
   Store,
   Plus,
@@ -32,7 +39,8 @@ import {
   ClipboardList,
   Wallet,
   CreditCard,
-  Banknote
+  Banknote,
+  Truck
 } from 'lucide-react';
 import { RetailerCardSkeleton, TableRowSkeleton } from '@/components/ui/Skeleton';
 
@@ -157,6 +165,14 @@ export default function SalesClient({
     { id: '1', category: 'Tea', quantity: '50 kg' }
   ]);
 
+  // Delivery Status State for new order
+  const [isOrderDelivered, setIsOrderDelivered] = useState<boolean>(true);
+
+  // Quick Action Modal States for Orders
+  const [collectingPaymentSale, setCollectingPaymentSale] = useState<any | null>(null);
+  const [collectCashInput, setCollectCashInput] = useState<string>('');
+  const [collectOnlineInput, setCollectOnlineInput] = useState<string>('');
+
   // Payment Breakdown State (Zero-Math automated calculation)
   const [hasPaymentReceived, setHasPaymentReceived] = useState<boolean>(false);
   const [sCashAmount, setSCashAmount] = useState<string>('');
@@ -196,7 +212,9 @@ export default function SalesClient({
     const totalQty = salesRecords.reduce((acc, curr) => acc + (Number(curr.order_qty) || 0), 0);
     const totalRetailers = retailers.length;
     const totalOrders = salesRecords.length;
-    return { totalRevenue, totalQty, totalRetailers, totalOrders };
+    const pendingDeliveries = salesRecords.filter(s => (s.delivery_status || 'delivered') === 'pending').length;
+    const pendingPayments = salesRecords.filter(s => (s.payment_status || 'credit') !== 'paid' && (Number(s.due_amount) > 0 || (s.payment_status === 'credit' && Number(s.amount) > 0))).length;
+    return { totalRevenue, totalQty, totalRetailers, totalOrders, pendingDeliveries, pendingPayments };
   }, [salesRecords, retailers]);
 
   // Real browser geolocation acquisition with high-accuracy retry & user feedback
@@ -534,6 +552,7 @@ export default function SalesClient({
       formData.append('cash_amount', cashVal.toString());
       formData.append('online_amount', onlineVal.toString());
       formData.append('due_amount', dueVal.toString());
+      formData.append('delivery_status', isOrderDelivered ? 'delivered' : 'pending');
 
       const res = await createSaleRecord(formData);
       if (res?.error) {
@@ -543,6 +562,7 @@ export default function SalesClient({
         setIsSalesModalOpen(false);
         setSAmount('');
         setSRetailerId('');
+        setIsOrderDelivered(true);
         setHasPaymentReceived(false);
         setSCashAmount('');
         setSOnlineAmount('');
@@ -551,8 +571,63 @@ export default function SalesClient({
     });
   };
 
+  // Handlers for Delivery & Payment quick actions
+  const handleMarkDelivered = (saleId: string) => {
+    if (!confirm('Mark this order as delivered?')) return;
+    startTransition(async () => {
+      const res = await updateSaleDeliveryStatus(saleId, 'delivered');
+      if (res?.error) {
+        alert(res.error);
+      }
+    });
+  };
+
+  const openCollectPaymentModal = (sale: any) => {
+    setCollectingPaymentSale(sale);
+    const totalAmt = Number(sale.amount) || 0;
+    const cashAmt = Number(sale.cash_amount) || 0;
+    const onlineAmt = Number(sale.online_amount) || 0;
+    const paidAmt = cashAmt + onlineAmt;
+    const dueAmt = sale.due_amount !== undefined && sale.due_amount !== null 
+      ? Number(sale.due_amount) 
+      : Math.max(0, totalAmt - paidAmt);
+
+    // Default to putting the remaining due in Cash (or blank)
+    setCollectCashInput(dueAmt > 0 ? dueAmt.toString() : '');
+    setCollectOnlineInput('');
+  };
+
+  const handleConfirmCollectPayment = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!collectingPaymentSale) return;
+
+    const cash = parseFloat(collectCashInput) || 0;
+    const online = parseFloat(collectOnlineInput) || 0;
+
+    if (cash <= 0 && online <= 0) {
+      alert('Please enter a valid cash or online amount.');
+      return;
+    }
+
+    startTransition(async () => {
+      const res = await collectSalePayment(collectingPaymentSale.id, {
+        cashAmount: cash,
+        onlineAmount: online
+      });
+
+      if (res?.error) {
+        alert(res.error);
+      } else {
+        setCollectingPaymentSale(null);
+        setCollectCashInput('');
+        setCollectOnlineInput('');
+      }
+    });
+  };
+
   const [selectedTerritory, setSelectedTerritory] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
+  const [salesStatusFilter, setSalesStatusFilter] = useState<'all' | 'pending_delivery' | 'pending_payment' | 'completed'>('all');
 
   // Compute unique territories dynamically
   const territories = useMemo(() => {
@@ -598,9 +673,23 @@ export default function SalesClient({
       const notes = (s.notes || '').toLowerCase();
       const matchesSearch = shop.includes(term) || owner.includes(term) || territory.includes(term) || notes.includes(term);
       const matchesTerritory = selectedTerritory === 'all' || s.retailers?.territory === selectedTerritory;
-      return matchesSearch && matchesTerritory;
+
+      // Status filters
+      const isPendingDelivery = (s.delivery_status || 'delivered') === 'pending';
+      const isPendingPayment = (s.payment_status || 'credit') !== 'paid' && (Number(s.due_amount) > 0 || (s.payment_status === 'credit' && Number(s.amount) > 0));
+
+      let matchesStatus = true;
+      if (salesStatusFilter === 'pending_delivery') {
+        matchesStatus = isPendingDelivery;
+      } else if (salesStatusFilter === 'pending_payment') {
+        matchesStatus = isPendingPayment;
+      } else if (salesStatusFilter === 'completed') {
+        matchesStatus = !isPendingDelivery && !isPendingPayment;
+      }
+
+      return matchesSearch && matchesTerritory && matchesStatus;
     });
-  }, [salesRecords, searchTerm, selectedTerritory]);
+  }, [salesRecords, searchTerm, selectedTerritory, salesStatusFilter]);
 
   // Helper to parse product summary from sale notes
   const getSaleProductsSummary = (notes?: string) => {
@@ -800,42 +889,101 @@ export default function SalesClient({
             </div>
           </div>
 
-          {/* Territory Pills Strip */}
-          {territories.length > 0 && (
-            <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pt-0.5 pb-0.5 no-scrollbar">
-              <span className="text-[11px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider shrink-0 mr-1">
-                Territory:
-              </span>
-              <button
-                type="button"
-                onClick={() => setSelectedTerritory('all')}
-                className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${
-                  selectedTerritory === 'all'
-                    ? 'bg-[#0D4728] text-[#FFF9CD] shadow-2xs'
-                    : 'bg-white border border-slate-200/90 text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
-                }`}
-              >
-                All ({retailers.length})
-              </button>
-              {territories.map(t => {
-                const count = retailers.filter(r => r.territory === t).length;
-                return (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setSelectedTerritory(t)}
-                    className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${
-                      selectedTerritory === t
-                        ? 'bg-[#0D4728] text-[#FFF9CD] shadow-2xs'
-                        : 'bg-white border border-slate-200/90 text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
-                    }`}
-                  >
-                    {t} ({count})
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          {/* Territory & Order Status Filter Pills Strip */}
+          <div className="space-y-2">
+            {/* Order Status Filters (Only for Orders tab) */}
+            {activeTab === 'sales' && (
+              <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pt-0.5 pb-0.5 no-scrollbar">
+                <span className="text-[11px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
+                  Status:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSalesStatusFilter('all')}
+                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${
+                    salesStatusFilter === 'all'
+                      ? 'bg-[#0D4728] text-[#FFF9CD] shadow-2xs'
+                      : 'bg-white border border-slate-200/90 text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
+                  }`}
+                >
+                  All Orders ({salesRecords.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSalesStatusFilter('pending_delivery')}
+                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 flex items-center gap-1.5 ${
+                    salesStatusFilter === 'pending_delivery'
+                      ? 'bg-amber-600 text-white shadow-2xs'
+                      : 'bg-amber-50/80 border border-amber-200 text-amber-800 hover:bg-amber-100/60'
+                  }`}
+                >
+                  <Truck className="w-3.5 h-3.5 shrink-0" />
+                  <span>Pending Delivery ({metrics.pendingDeliveries})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSalesStatusFilter('pending_payment')}
+                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 flex items-center gap-1.5 ${
+                    salesStatusFilter === 'pending_payment'
+                      ? 'bg-rose-600 text-white shadow-2xs'
+                      : 'bg-rose-50/80 border border-rose-200 text-rose-800 hover:bg-rose-100/60'
+                  }`}
+                >
+                  <Wallet className="w-3.5 h-3.5 shrink-0" />
+                  <span>Pending Payment ({metrics.pendingPayments})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSalesStatusFilter('completed')}
+                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 flex items-center gap-1.5 ${
+                    salesStatusFilter === 'completed'
+                      ? 'bg-emerald-700 text-white shadow-2xs'
+                      : 'bg-emerald-50/80 border border-emerald-200 text-emerald-800 hover:bg-emerald-100/60'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>Completed</span>
+                </button>
+              </div>
+            )}
+
+            {/* Territory Pills Strip */}
+            {territories.length > 0 && (
+              <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pt-0.5 pb-0.5 no-scrollbar">
+                <span className="text-[11px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider shrink-0 mr-1">
+                  Territory:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTerritory('all')}
+                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${
+                    selectedTerritory === 'all'
+                      ? 'bg-[#0D4728] text-[#FFF9CD] shadow-2xs'
+                      : 'bg-white border border-slate-200/90 text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
+                  }`}
+                >
+                  All ({retailers.length})
+                </button>
+                {territories.map(t => {
+                  const count = retailers.filter(r => r.territory === t).length;
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setSelectedTerritory(t)}
+                      className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${
+                        selectedTerritory === t
+                          ? 'bg-[#0D4728] text-[#FFF9CD] shadow-2xs'
+                          : 'bg-white border border-slate-200/90 text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
+                      }`}
+                    >
+                      {t} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
         </div>
 
@@ -1238,60 +1386,114 @@ export default function SalesClient({
                           )}
                         </div>
 
-                        {/* Footer: Rep, Date/Time, Settlement Badge & Map */}
-                        <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#0D4728] to-[#1a5b36] text-[#FFF9CD] font-bold text-[10px] flex items-center justify-center shrink-0">
-                              {rep.monogram}
+                        {/* Footer: Rep, Date/Time, Badges & Quick Actions */}
+                        <div className="pt-2.5 border-t border-slate-100 flex flex-col gap-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#0D4728] to-[#1a5b36] text-[#FFF9CD] font-bold text-[10px] flex items-center justify-center shrink-0">
+                                {rep.monogram}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[11px] font-semibold text-slate-700 truncate">{rep.name}</p>
+                                <p className="text-[10px] text-slate-400 font-mono">{dt.date} &bull; {dt.time || '12:00 PM'}</p>
+                              </div>
                             </div>
-                            <div className="min-w-0">
-                              <p className="text-[11px] font-semibold text-slate-700 truncate">{rep.name}</p>
-                              <p className="text-[10px] text-slate-400 font-mono">{dt.date} &bull; {dt.time || '12:00 PM'}</p>
-                            </div>
-                          </div>
 
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {(() => {
-                              const pStatus = sale.payment_status || 'credit';
-                              const cashAmt = Number(sale.cash_amount) || 0;
-                              const onlineAmt = Number(sale.online_amount) || 0;
-                              const paidAmt = cashAmt + onlineAmt;
-
-                              if (pStatus === 'paid') {
-                                return (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-semibold">
+                            {/* Delivery & Payment Status Badges */}
+                            <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                              {/* Delivery Badge */}
+                              {(() => {
+                                const isDelivered = (sale.delivery_status || 'delivered') === 'delivered';
+                                return isDelivered ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-semibold">
                                     <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
-                                    <span>Paid ₹{paidAmt.toLocaleString('en-IN')}</span>
+                                    <span>Delivered</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-semibold animate-pulse">
+                                    <Truck className="w-2.5 h-2.5 text-amber-600" />
+                                    <span>Pending Delivery</span>
                                   </span>
                                 );
-                              }
-                              if (pStatus === 'partial') {
-                                return (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-900 text-[10px] font-semibold">
-                                    <Wallet className="w-2.5 h-2.5 text-amber-600" />
-                                    <span>₹{paidAmt.toLocaleString('en-IN')} Paid</span>
-                                  </span>
-                                );
-                              }
-                              return (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-800 text-[10px] font-semibold">
-                                  <AlertCircle className="w-2.5 h-2.5 text-rose-600" />
-                                  <span>Credit</span>
-                                </span>
-                              );
-                            })()}
+                              })()}
 
-                            {sale.retailers && (
-                              <button
-                                type="button"
-                                onClick={() => openInMaps(sale.retailers?.geo_location, sale.retailers?.address, sale.retailers?.shop_name)}
-                                className="p-1.5 rounded-full bg-slate-100 hover:bg-[#0D4728]/10 text-slate-700 hover:text-[#0D4728] transition-colors border border-slate-200/60"
-                                title="Open retailer in Maps"
-                              >
-                                <Navigation className="w-3.5 h-3.5 text-[#0D4728]" />
-                              </button>
-                            )}
+                              {/* Payment Badge */}
+                              {(() => {
+                                const pStatus = sale.payment_status || 'credit';
+                                const cashAmt = Number(sale.cash_amount) || 0;
+                                const onlineAmt = Number(sale.online_amount) || 0;
+                                const paidAmt = cashAmt + onlineAmt;
+
+                                if (pStatus === 'paid') {
+                                  return (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-semibold">
+                                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                      <span>Paid</span>
+                                    </span>
+                                  );
+                                }
+                                if (pStatus === 'partial') {
+                                  return (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-900 text-[10px] font-semibold">
+                                      <Wallet className="w-2.5 h-2.5 text-amber-600" />
+                                      <span>₹{paidAmt.toLocaleString('en-IN')} Paid</span>
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-800 text-[10px] font-semibold">
+                                    <AlertCircle className="w-2.5 h-2.5 text-rose-600" />
+                                    <span>Credit</span>
+                                  </span>
+                                );
+                              })()}
+                            </div>
                           </div>
+
+                          {/* Quick Action Buttons for Field Reps on Mobile */}
+                          {((sale.delivery_status || 'delivered') === 'pending' || (sale.payment_status || 'credit') !== 'paid' || sale.retailers) && (
+                            <div className="flex items-center justify-end gap-1.5 pt-1.5 border-t border-slate-100">
+                              {/* Mark Delivered Action */}
+                              {(sale.delivery_status || 'delivered') === 'pending' && (
+                                <button
+                                  type="button"
+                                  disabled={isPending}
+                                  onClick={() => handleMarkDelivered(sale.id)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-bold transition-all shadow-2xs active:scale-95 disabled:opacity-50"
+                                  title="Mark order as delivered"
+                                >
+                                  <Check className="w-3 h-3 text-amber-700" />
+                                  <span>Mark Delivered</span>
+                                </button>
+                              )}
+
+                              {/* Collect Payment Action */}
+                              {(sale.payment_status || 'credit') !== 'paid' && (
+                                <button
+                                  type="button"
+                                  disabled={isPending}
+                                  onClick={() => openCollectPaymentModal(sale)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-[11px] font-bold transition-all shadow-2xs active:scale-95 disabled:opacity-50"
+                                  title="Collect payment for this order"
+                                >
+                                  <IndianRupee className="w-3 h-3 text-emerald-700" />
+                                  <span>Collect ₹</span>
+                                </button>
+                              )}
+
+                              {/* Map Button */}
+                              {sale.retailers && (
+                                <button
+                                  type="button"
+                                  onClick={() => openInMaps(sale.retailers?.geo_location, sale.retailers?.address, sale.retailers?.shop_name)}
+                                  className="p-1.5 rounded-full bg-slate-100 hover:bg-[#0D4728]/10 text-slate-700 hover:text-[#0D4728] transition-colors border border-slate-200/60"
+                                  title="Open retailer in Maps"
+                                >
+                                  <Navigation className="w-3.5 h-3.5 text-[#0D4728]" />
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -1310,6 +1512,7 @@ export default function SalesClient({
                       <th className="py-4 px-6">Products Booked</th>
                       <th className="py-4 px-6">Territory</th>
                       <th className="py-4 px-6">Order Total</th>
+                      <th className="py-4 px-6">Delivery</th>
                       <th className="py-4 px-6">Payment Settlement</th>
                       <th className="py-4 px-6 text-right">Actions</th>
                     </tr>
@@ -1317,14 +1520,14 @@ export default function SalesClient({
                   <tbody className="divide-y divide-slate-100">
                     {isPending ? (
                       <>
-                        <TableRowSkeleton columns={8} />
-                        <TableRowSkeleton columns={8} />
-                        <TableRowSkeleton columns={8} />
-                        <TableRowSkeleton columns={8} />
+                        <TableRowSkeleton columns={9} />
+                        <TableRowSkeleton columns={9} />
+                        <TableRowSkeleton columns={9} />
+                        <TableRowSkeleton columns={9} />
                       </>
                     ) : filteredSales.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="py-20 text-center text-slate-400">
+                        <td colSpan={9} className="py-20 text-center text-slate-400">
                           <ShoppingBag className="w-10 h-10 mx-auto mb-2 opacity-40 text-slate-400" />
                           <p className="text-sm font-semibold text-slate-700">No sales records logged yet.</p>
                           <p className="text-xs text-slate-400 mt-1">Use "+ Record Sale" to submit a field transaction.</p>
@@ -1416,6 +1619,24 @@ export default function SalesClient({
                               </span>
                             </td>
 
+                            {/* Delivery Status */}
+                            <td className="py-4 px-6">
+                              {(() => {
+                                const isDelivered = (sale.delivery_status || 'delivered') === 'delivered';
+                                return isDelivered ? (
+                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold">
+                                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                    <span>Delivered</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold animate-pulse">
+                                    <Truck className="w-3 h-3 text-amber-600" />
+                                    <span>Pending Delivery</span>
+                                  </span>
+                                );
+                              })()}
+                            </td>
+
                             {/* Payment Settlement Status */}
                             <td className="py-4 px-6">
                               {(() => {
@@ -1453,19 +1674,50 @@ export default function SalesClient({
                               })()}
                             </td>
 
-                            {/* Action / Map Shortcut */}
+                            {/* Actions Column (Mark Delivered, Collect ₹, and Map) */}
                             <td className="py-4 px-6 text-right">
-                              {sale.retailers && (
-                                <button
-                                  type="button"
-                                  onClick={() => openInMaps(sale.retailers?.geo_location, sale.retailers?.address, sale.retailers?.shop_name)}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 hover:bg-[#0D4728]/10 text-slate-700 hover:text-[#0D4728] text-xs font-semibold transition-all border border-slate-200/60"
-                                  title="Open retailer in Maps"
-                                >
-                                  <Navigation className="w-3 h-3 text-[#0D4728]" />
-                                  <span>Map</span>
-                                </button>
-                              )}
+                              <div className="inline-flex items-center justify-end gap-1.5">
+                                {/* Mark Delivered Button */}
+                                {(sale.delivery_status || 'delivered') === 'pending' && (
+                                  <button
+                                    type="button"
+                                    disabled={isPending}
+                                    onClick={() => handleMarkDelivered(sale.id)}
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold transition-all shadow-2xs hover:shadow-xs disabled:opacity-50"
+                                    title="Mark order as delivered"
+                                  >
+                                    <Check className="w-3.5 h-3.5 text-amber-700" />
+                                    <span>Deliver</span>
+                                  </button>
+                                )}
+
+                                {/* Collect Payment Button */}
+                                {(sale.payment_status || 'credit') !== 'paid' && (
+                                  <button
+                                    type="button"
+                                    disabled={isPending}
+                                    onClick={() => openCollectPaymentModal(sale)}
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold transition-all shadow-2xs hover:shadow-xs disabled:opacity-50"
+                                    title="Collect payment"
+                                  >
+                                    <IndianRupee className="w-3.5 h-3.5 text-emerald-700" />
+                                    <span>Collect ₹</span>
+                                  </button>
+                                )}
+
+                                {/* Map Shortcut */}
+                                {sale.retailers && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openInMaps(sale.retailers?.geo_location, sale.retailers?.address, sale.retailers?.shop_name)}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 hover:bg-[#0D4728]/10 text-slate-700 hover:text-[#0D4728] text-xs font-semibold transition-all border border-slate-200/60"
+                                    title="Open retailer in Maps"
+                                  >
+                                    <Navigation className="w-3 h-3 text-[#0D4728]" />
+                                    <span>Map</span>
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -2268,6 +2520,45 @@ export default function SalesClient({
                 })()}
               </div>
 
+              {/* 5. Delivery Status Toggle */}
+              <div className="p-3 sm:p-4 rounded-2xl bg-slate-50/90 border border-slate-200/90">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Truck className="w-3.5 h-3.5 text-[#0D4728] shrink-0" />
+                      <span>Order Delivered on Spot?</span>
+                    </label>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Toggle whether goods were handed over immediately or pending delivery</p>
+                  </div>
+
+                  {/* Delivery Toggle Pills */}
+                  <div className="grid grid-cols-2 sm:inline-flex p-1 bg-slate-200/70 rounded-full text-xs font-semibold shrink-0 gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setIsOrderDelivered(false)}
+                      className={`px-3 py-1 rounded-full text-center transition-all text-xs ${
+                        !isOrderDelivered 
+                          ? 'bg-amber-600 text-white shadow-xs' 
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Pending
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsOrderDelivered(true)}
+                      className={`px-3 py-1 rounded-full text-center transition-all text-xs ${
+                        isOrderDelivered 
+                          ? 'bg-[#0D4728] text-[#FFF9CD] shadow-xs' 
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Delivered
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* Order Date Stamp Badge */}
               <div className="p-2.5 sm:p-3 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between text-xs text-slate-500">
                 <div className="flex items-center gap-1.5 font-medium">
@@ -2445,6 +2736,179 @@ export default function SalesClient({
                 </button>
               </div>
 
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 6. COLLECT PAYMENT MODAL (Quick Collection Against Credit / Partial Orders) */}
+      {collectingPaymentSale && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-3 sm:p-4">
+          <div className="bg-white rounded-[24px] sm:rounded-[32px] w-full max-w-md shadow-2xl border border-white/80 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                  <IndianRupee className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">Collect Payment</h3>
+                  <p className="text-[11px] sm:text-xs text-slate-500">Record cash/online collection for this order</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setCollectingPaymentSale(null)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmCollectPayment} className="p-4 sm:p-5 space-y-4">
+              {/* Order & Retailer Snapshot */}
+              <div className="p-3 sm:p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-bold text-slate-900 text-sm truncate">
+                    {collectingPaymentSale.retailers?.shop_name || 'Retailer Shop'}
+                  </h4>
+                  <span className="text-[11px] font-semibold bg-slate-200/80 text-slate-700 px-2.5 py-0.5 rounded-full shrink-0">
+                    {collectingPaymentSale.retailers?.territory || 'General'}
+                  </span>
+                </div>
+                
+                {/* Financial Overview Cards */}
+                <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-200/60 text-center">
+                  <div className="p-2 bg-white rounded-xl border border-slate-100">
+                    <p className="text-[10px] text-slate-400 uppercase font-semibold">Total</p>
+                    <p className="text-xs font-bold text-slate-900 font-mono mt-0.5">
+                      ₹{Number(collectingPaymentSale.amount).toLocaleString('en-IN')}
+                    </p>
+                  </div>
+                  <div className="p-2 bg-white rounded-xl border border-slate-100">
+                    <p className="text-[10px] text-slate-400 uppercase font-semibold">Received</p>
+                    <p className="text-xs font-bold text-emerald-700 font-mono mt-0.5">
+                      ₹{((Number(collectingPaymentSale.cash_amount) || 0) + (Number(collectingPaymentSale.online_amount) || 0)).toLocaleString('en-IN')}
+                    </p>
+                  </div>
+                  <div className="p-2 bg-amber-50 rounded-xl border border-amber-200/70">
+                    <p className="text-[10px] text-amber-700 uppercase font-semibold">Remaining</p>
+                    <p className="text-xs font-bold text-amber-900 font-mono mt-0.5">
+                      ₹{(
+                        collectingPaymentSale.due_amount !== undefined && collectingPaymentSale.due_amount !== null
+                          ? Number(collectingPaymentSale.due_amount)
+                          : Math.max(0, Number(collectingPaymentSale.amount) - ((Number(collectingPaymentSale.cash_amount) || 0) + (Number(collectingPaymentSale.online_amount) || 0)))
+                      ).toLocaleString('en-IN')}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment Input Fields */}
+              <div className="space-y-3">
+                {/* Cash Input */}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Banknote className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Cash Collected (₹)</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const total = Number(collectingPaymentSale.amount) || 0;
+                        const paid = (Number(collectingPaymentSale.cash_amount) || 0) + (Number(collectingPaymentSale.online_amount) || 0);
+                        const due = collectingPaymentSale.due_amount !== undefined && collectingPaymentSale.due_amount !== null
+                          ? Number(collectingPaymentSale.due_amount)
+                          : Math.max(0, total - paid);
+                        setCollectCashInput(due.toString());
+                        setCollectOnlineInput('');
+                      }}
+                      className="text-[10px] text-emerald-700 font-bold hover:underline"
+                    >
+                      Full Cash
+                    </button>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={collectCashInput}
+                    onChange={(e) => setCollectCashInput(e.target.value)}
+                    className="w-full bg-slate-50/70 border border-slate-200 rounded-2xl py-2.5 px-3.5 text-sm font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all"
+                  />
+                </div>
+
+                {/* Online UPI Input */}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <CreditCard className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Online / UPI Collected (₹)</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const total = Number(collectingPaymentSale.amount) || 0;
+                        const paid = (Number(collectingPaymentSale.cash_amount) || 0) + (Number(collectingPaymentSale.online_amount) || 0);
+                        const due = collectingPaymentSale.due_amount !== undefined && collectingPaymentSale.due_amount !== null
+                          ? Number(collectingPaymentSale.due_amount)
+                          : Math.max(0, total - paid);
+                        setCollectOnlineInput(due.toString());
+                        setCollectCashInput('');
+                      }}
+                      className="text-[10px] text-blue-700 font-bold hover:underline"
+                    >
+                      Full UPI
+                    </button>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={collectOnlineInput}
+                    onChange={(e) => setCollectOnlineInput(e.target.value)}
+                    className="w-full bg-slate-50/70 border border-slate-200 rounded-2xl py-2.5 px-3.5 text-sm font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Total Collecting Summary */}
+              {(() => {
+                const c = parseFloat(collectCashInput) || 0;
+                const o = parseFloat(collectOnlineInput) || 0;
+                const totalCol = c + o;
+                return (
+                  <div className="p-3 bg-emerald-50/80 border border-emerald-200/80 rounded-2xl flex items-center justify-between text-xs">
+                    <span className="font-semibold text-emerald-900">Total To Collect Now:</span>
+                    <span className="font-bold font-mono text-emerald-800 text-sm">
+                      ₹{totalCol.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                );
+              })()}
+
+              {/* Modal Actions */}
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setCollectingPaymentSale(null)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-full text-xs font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending || ((parseFloat(collectCashInput) || 0) <= 0 && (parseFloat(collectOnlineInput) || 0) <= 0)}
+                  className="flex items-center gap-1.5 bg-[#0D4728] hover:bg-[#167a44] text-[#FFF9CD] px-5 py-2 rounded-full text-xs font-semibold transition-all disabled:opacity-50 shadow-xs"
+                >
+                  {isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Confirm Collection</span>
+                </button>
+              </div>
             </form>
           </div>
         </div>

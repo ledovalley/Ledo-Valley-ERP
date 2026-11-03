@@ -161,11 +161,13 @@ export async function createSaleRecord(formData: FormData) {
   const cash_amount = parseFloat(formData.get('cash_amount') as string) || 0
   const online_amount = parseFloat(formData.get('online_amount') as string) || 0
   const due_amount = parseFloat(formData.get('due_amount') as string) || (amount - cash_amount - online_amount)
+  const delivery_status = (formData.get('delivery_status') as string) || 'delivered'
 
   // Automatically stamp current date & time
   const now = new Date()
   const datePart = now.toISOString().split('T')[0]
   const createdAt = now.toISOString()
+  const deliveredAt = delivery_status === 'delivered' ? createdAt : null
 
   let parsedQty = parseInt(rawQty, 10)
   if (isNaN(parsedQty) || parsedQty <= 0) {
@@ -198,6 +200,8 @@ export async function createSaleRecord(formData: FormData) {
     cash_amount,
     online_amount,
     due_amount,
+    delivery_status,
+    delivered_at: deliveredAt,
     sales_person_id: user?.id
   }).select().single()
 
@@ -288,6 +292,113 @@ export async function logNoOrderVisit(formData: FormData) {
   revalidatePath('/dashboard/sales')
   revalidatePath('/dashboard')
   return { success: true, visit: data }
+}
+
+// Update Delivery Status on a Sale Record
+export async function updateSaleDeliveryStatus(saleId: string, deliveryStatus: 'pending' | 'delivered' | 'cancelled') {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user || !(await isSessionValid())) {
+    return { error: "Session expired. Please log in again." }
+  }
+
+  if (!saleId) return { error: "Sale ID is required." }
+
+  const delivered_at = deliveryStatus === 'delivered' ? new Date().toISOString() : null
+
+  const { data, error } = await supabase
+    .from('sales_records')
+    .update({
+      delivery_status: deliveryStatus,
+      delivered_at
+    })
+    .eq('id', saleId)
+    .select()
+    .single()
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/dashboard/sales')
+  revalidatePath('/dashboard')
+  return { success: true, sale: data }
+}
+
+// Record Payment Collection for an Existing Order
+export async function collectSalePayment(
+  saleId: string,
+  paymentData: { cashAmount: number; onlineAmount: number }
+) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user || !(await isSessionValid())) {
+    return { error: "Session expired. Please log in again." }
+  }
+
+  if (!saleId) return { error: "Sale ID is required." }
+
+  const cash = Math.max(0, Number(paymentData.cashAmount) || 0)
+  const online = Math.max(0, Number(paymentData.onlineAmount) || 0)
+  const additionalPaid = cash + online
+
+  if (additionalPaid <= 0) {
+    return { error: "Payment amount must be greater than zero." }
+  }
+
+  // Fetch current sale to calculate new totals
+  const { data: sale, error: fetchErr } = await supabase
+    .from('sales_records')
+    .select('*')
+    .eq('id', saleId)
+    .single()
+
+  if (fetchErr || !sale) {
+    return { error: fetchErr?.message || "Order not found." }
+  }
+
+  const newCash = Number(sale.cash_amount || 0) + cash
+  const newOnline = Number(sale.online_amount || 0) + online
+  const totalPaid = newCash + newOnline
+  const totalAmount = Number(sale.amount || 0)
+  const newDue = Math.max(0, totalAmount - totalPaid)
+  const newStatus = newDue <= 0 ? 'paid' : 'partial'
+
+  const { data: updated, error: updateErr } = await supabase
+    .from('sales_records')
+    .update({
+      cash_amount: newCash,
+      online_amount: newOnline,
+      due_amount: newDue,
+      payment_status: newStatus
+    })
+    .eq('id', saleId)
+    .select()
+    .single()
+
+  if (updateErr) return { error: updateErr.message }
+
+  // If rep has active shift, reflect the new cash/online collection
+  const { data: activeShift } = await supabase
+    .from('shifts')
+    .select('id')
+    .eq('user_id', user.id)
+    .eq('status', 'active')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (activeShift) {
+    await supabase.rpc('fn_record_sale_on_shift', {
+      p_shift_id: activeShift.id,
+      p_order_value: 0,
+      p_cash_amount: cash,
+      p_online_amount: online,
+      p_due_amount: -additionalPaid
+    })
+  }
+
+  revalidatePath('/dashboard/sales')
+  revalidatePath('/dashboard')
+  return { success: true, sale: updated }
 }
 
 // Fetch Retailer Visits
