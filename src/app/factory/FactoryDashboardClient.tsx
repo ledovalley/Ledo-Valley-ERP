@@ -289,22 +289,22 @@ export default function FactoryDashboardClient({
   };
 
   const handleLedgerAdjustment = (targetId: string, amount: number, reason: string) => {
-    runAction(
+    return runAction(
       () => adjustLedgerLot(targetId, amount, reason),
       `Adjusted ledger weight by ${amount > 0 ? "+" : ""}${amount} kg.`
-    );
+    ).then(r => !!r);
   };
 
   const handleEditLooseItem = (id: string, updatedData: Partial<LooseLot> & { labels?: string[] | string }) => {
     // What the user saw when they opened the form: used to detect conflicting changes
     const existing = looseInventory.find(l => l.id === id);
-    if (!existing) return;
+    if (!existing) return Promise.resolve(false);
 
     const labels = Array.isArray(updatedData.labels)
       ? updatedData.labels
       : String(updatedData.labels || "").split(",");
 
-    runAction(
+    return runAction(
       () =>
         updateLooseLot(
           id,
@@ -319,21 +319,21 @@ export default function FactoryDashboardClient({
           { bags: existing.bags, weightPerBag: existing.weightPerBag, weight: existing.weight }
         ),
       "Lot updated."
-    );
+    ).then(r => !!r);
   };
 
   // ---------------------------------------------------------------------------
   // Packet catalog
   // ---------------------------------------------------------------------------
   const handleAddCatalogProduct = (product: { name: string; unit: string; size: number; hsnCode?: string; gstRate?: number }) => {
-    runAction(() => savePacketProduct(product), `Added "${product.name}" to the packet catalog.`);
+    return runAction(() => savePacketProduct(product), `Added "${product.name}" to the packet catalog.`).then(r => !!r);
   };
 
   const handleEditCatalogProduct = (id: string, updatedData: Partial<CatalogProduct>) => {
     const existing = packetCatalog.find(p => p.id === id);
-    if (!existing) return;
+    if (!existing) return Promise.resolve(false);
 
-    runAction(
+    return runAction(
       () =>
         savePacketProduct({
           id,
@@ -346,7 +346,7 @@ export default function FactoryDashboardClient({
           expectedStock: existing.stock
         }),
       `Updated "${updatedData.name ?? existing.name}".`
-    );
+    ).then(r => !!r);
   };
 
   const handleDeleteCatalogProduct = (id: string) => {

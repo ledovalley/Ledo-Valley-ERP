@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Network, ArrowDown, Search, Download, Filter, FileText, File, X } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Network, ArrowDown, Search, Download, Filter, FileText, File, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { HistoryRecord, SystemUser } from '@/types/factory';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -41,6 +41,10 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
   const [actionFilter, setActionFilter] = useState('');
   const [traceModalData, setTraceModalData] = useState<HistoryRecord | null>(null);
 
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(20);
+
   const uniqueUsers = useMemo(() => {
     const users = historyList.map(h => h.userName || h.userId).filter(Boolean);
     return [...new Set(users)];
@@ -76,6 +80,19 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
       return true;
     });
   }, [historyList, searchTerm, userFilter, actionFilter]);
+
+  // Reset to page 1 whenever filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, userFilter, actionFilter, pageSize]);
+
+  // Paginated slice calculation
+  const totalItems = filteredHistory.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const paginatedHistory = useMemo(() => {
+    const startIdx = (currentPage - 1) * pageSize;
+    return filteredHistory.slice(startIdx, startIdx + pageSize);
+  }, [filteredHistory, currentPage, pageSize]);
 
   const kpiData = useMemo(() => {
     let totalYields = 0;
@@ -367,10 +384,10 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
               </tr>
             </thead>
             <tbody className="divide-y divide-[#0B172B]/5 text-sm">
-              {filteredHistory.length === 0 ? (
+              {paginatedHistory.length === 0 ? (
                 <tr><td colSpan={5} className="p-16 text-center text-[#0B172B]/40">No completed blending cycles stored in history logbook.</td></tr>
               ) : (
-                filteredHistory.map(record => {
+                paginatedHistory.map(record => {
                   const details = record.details || {};
                   const isBlendEvent = BLEND_EVENT_TYPES.includes(record.type);
                   const mergedFrom = mergedSerialsOf(details);
@@ -530,6 +547,55 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Bar */}
+        {totalItems > 0 && (
+          <div className="p-4 bg-white border-t border-[#0B172B]/8 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs text-[#0B172B]/60 font-medium">
+              <span>Rows per page:</span>
+              <select
+                value={pageSize}
+                onChange={e => setPageSize(Number(e.target.value))}
+                className="bg-[#F0F5F9] border border-[#0B172B]/10 rounded-lg px-2 py-1 text-xs font-bold text-[#0B172B] outline-none focus:ring-1 focus:ring-[#009965]"
+              >
+                {[10, 20, 50, 100].map(s => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <span className="ml-2 font-mono">
+                Showing {Math.min((currentPage - 1) * pageSize + 1, totalItems)}–{Math.min(currentPage * pageSize, totalItems)} of {totalItems}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={currentPage <= 1}
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                className="p-1.5 rounded-lg border border-[#0B172B]/10 bg-white hover:bg-[#F0F5F9] text-[#0B172B] disabled:opacity-30 disabled:pointer-events-none transition-all"
+                title="Previous page"
+              >
+                <ChevronLeft size={16} />
+              </button>
+
+              <div className="flex items-center gap-1 px-2 text-xs font-semibold text-[#0B172B]">
+                <span className="font-mono">{currentPage}</span>
+                <span className="text-[#0B172B]/40">/</span>
+                <span className="font-mono text-[#0B172B]/70">{totalPages}</span>
+              </div>
+
+              <button
+                type="button"
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                className="p-1.5 rounded-lg border border-[#0B172B]/10 bg-white hover:bg-[#F0F5F9] text-[#0B172B] disabled:opacity-30 disabled:pointer-events-none transition-all"
+                title="Next page"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );

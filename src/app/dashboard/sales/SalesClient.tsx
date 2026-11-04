@@ -7,8 +7,11 @@ import {
   createSaleRecord, 
   logNoOrderVisit,
   updateSaleDeliveryStatus,
-  collectSalePayment
+  collectSalePayment,
+  fetchSalesPeriod,
+  type SalesSummaryRow
 } from './actions';
+import { SALES_DEFAULT_DAYS, SALES_PERIOD_OPTIONS, type SalesPeriodKey } from '@/utils/salesPeriods';
 import {
   Store,
   Plus,
@@ -206,16 +209,56 @@ export default function SalesClient({
     return () => clearInterval(interval);
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // Period: everyone starts on the last 60 days (loaded with the page). Admins and
+  // managers can pick a longer period; its totals are added up in the database and
+  // its sales load 100 at a time.
+  // ---------------------------------------------------------------------------
+  const canPickPeriod = currentUserRole === 'admin' || currentUserRole === 'manager';
+  const [period, setPeriod] = useState<SalesPeriodKey>('60d');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [periodPerson, setPeriodPerson] = useState('');
+  const [periodData, setPeriodData] = useState<{
+    label: string; summary: SalesSummaryRow[]; rows: any[]; hasMore: boolean; nextOffset: number
+  } | null>(null);
+  const [periodLoading, setPeriodLoading] = useState(false);
+  const [periodError, setPeriodError] = useState('');
+
+  const loadPeriod = async (key: SalesPeriodKey, opts: { append?: boolean; person?: string } = {}) => {
+    const person = opts.person ?? periodPerson;
+    if (key === '60d' && !person) { setPeriodData(null); setPeriodError(''); return; }
+    setPeriodLoading(true);
+    setPeriodError('');
+    const offset = opts.append && periodData ? periodData.nextOffset : 0;
+    const res = await fetchSalesPeriod({ period: key, from: customFrom, to: customTo, salesPersonId: person || null, offset });
+    setPeriodLoading(false);
+    if ('error' in res) { setPeriodError(res.error); return; }
+    setPeriodData(prev => opts.append && prev
+      ? { ...prev, rows: [...prev.rows, ...res.rows], hasMore: res.hasMore, nextOffset: offset + res.rows.length }
+      : { label: res.label, summary: res.summary, rows: res.rows, hasMore: res.hasMore, nextOffset: offset + res.rows.length });
+  };
+
+  // The sales shown: the chosen period, or the last 60 days loaded with the page
+  const records = periodData ? periodData.rows : salesRecords;
+
+  // How many sales are drawn; "Show more" adds 100 (drawing thousands at once is slow)
+  const [visibleCount, setVisibleCount] = useState(100);
+
   // Metrics summary
   const metrics = useMemo(() => {
-    const totalRevenue = salesRecords.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-    const totalQty = salesRecords.reduce((acc, curr) => acc + (Number(curr.order_qty) || 0), 0);
+    const totalRevenue = periodData
+      ? periodData.summary.reduce((acc, r) => acc + r.revenue, 0)
+      : records.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+    const totalQty = records.reduce((acc, curr) => acc + (Number(curr.order_qty) || 0), 0);
     const totalRetailers = retailers.length;
-    const totalOrders = salesRecords.length;
-    const pendingDeliveries = salesRecords.filter(s => (s.delivery_status || 'delivered') === 'pending').length;
-    const pendingPayments = salesRecords.filter(s => (s.payment_status || 'credit') !== 'paid' && (Number(s.due_amount) > 0 || (s.payment_status === 'credit' && Number(s.amount) > 0))).length;
+    const totalOrders = periodData
+      ? periodData.summary.reduce((acc, r) => acc + r.orders, 0)
+      : records.length;
+    const pendingDeliveries = records.filter(s => (s.delivery_status || 'delivered') === 'pending').length;
+    const pendingPayments = records.filter(s => (s.payment_status || 'credit') !== 'paid' && (Number(s.due_amount) > 0 || (s.payment_status === 'credit' && Number(s.amount) > 0))).length;
     return { totalRevenue, totalQty, totalRetailers, totalOrders, pendingDeliveries, pendingPayments };
-  }, [salesRecords, retailers]);
+  }, [records, periodData, retailers]);
 
   // Real browser geolocation acquisition with high-accuracy retry & user feedback
   const requestBrowserLocation = (isForEdit = false) => {
@@ -567,6 +610,7 @@ export default function SalesClient({
         setSCashAmount('');
         setSOnlineAmount('');
         setOrderItems([{ id: '1', category: availableCategories[0]?.name || 'Tea', quantity: '50 kg' }]);
+        if (periodData) loadPeriod(period);
       }
     });
   };
@@ -665,7 +709,7 @@ export default function SalesClient({
   }, [retailers, searchTerm, selectedTerritory]);
 
   const filteredSales = useMemo(() => {
-    return salesRecords.filter(s => {
+    return records.filter(s => {
       const term = searchTerm.toLowerCase();
       const shop = (s.retailers?.shop_name || '').toLowerCase();
       const owner = (s.retailers?.name || '').toLowerCase();
@@ -689,7 +733,11 @@ export default function SalesClient({
 
       return matchesSearch && matchesTerritory && matchesStatus;
     });
-  }, [salesRecords, searchTerm, selectedTerritory, salesStatusFilter]);
+  }, [records, searchTerm, selectedTerritory, salesStatusFilter]);
+
+  // Back to the first 100 whenever what's being looked at changes
+  useEffect(() => { setVisibleCount(100); }, [searchTerm, selectedTerritory, periodData?.label, activeTab, salesStatusFilter]);
+  const shownSales = filteredSales.slice(0, visibleCount);
 
   // Helper to parse product summary from sale notes
   const getSaleProductsSummary = (notes?: string) => {
@@ -884,7 +932,7 @@ export default function SalesClient({
               <div className="text-[11px] sm:text-sm text-slate-500 font-medium whitespace-nowrap">
                 Showing <span className="font-bold text-slate-900">
                   {activeTab === 'retailers' ? filteredRetailers.length : filteredSales.length}
-                </span> items
+                </span> items{activeTab === 'sales' && (periodData ? ` · ${periodData.label}` : ` · last ${SALES_DEFAULT_DAYS} days`)}
               </div>
             </div>
           </div>
@@ -1316,6 +1364,95 @@ export default function SalesClient({
           {/* TAB 2: SALES HISTORY TABLE & MOBILE FEED */}
           {activeTab === 'sales' && (
             <div className="flex-1 flex flex-col">
+              {canPickPeriod ? (
+                <div className="mb-4 space-y-3">
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label className="text-xs font-semibold text-slate-500">
+                      Period
+                      <select
+                        value={period}
+                        onChange={e => {
+                          const key = e.target.value as SalesPeriodKey;
+                          setPeriod(key);
+                          if (key !== 'custom') loadPeriod(key);
+                        }}
+                        className="block mt-1 bg-white border border-slate-200 rounded-full px-3 py-2 text-xs sm:text-sm text-slate-900"
+                      >
+                        {SALES_PERIOD_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+                      </select>
+                    </label>
+                    {period === 'custom' && (
+                      <>
+                        <label className="text-xs font-semibold text-slate-500">From
+                          <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+                            className="block mt-1 bg-white border border-slate-200 rounded-full px-3 py-1.5 text-xs sm:text-sm text-slate-900" />
+                        </label>
+                        <label className="text-xs font-semibold text-slate-500">To
+                          <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
+                            className="block mt-1 bg-white border border-slate-200 rounded-full px-3 py-1.5 text-xs sm:text-sm text-slate-900" />
+                        </label>
+                        <button type="button" onClick={() => loadPeriod('custom')} disabled={periodLoading}
+                          className="h-9 px-4 rounded-full bg-[#0D4728] text-[#FFF9CD] text-xs font-semibold disabled:opacity-50">
+                          Show
+                        </button>
+                      </>
+                    )}
+                    <label className="text-xs font-semibold text-slate-500">
+                      Salesperson
+                      <select
+                        value={periodPerson}
+                        onChange={e => { setPeriodPerson(e.target.value); loadPeriod(period, { person: e.target.value }); }}
+                        className="block mt-1 bg-white border border-slate-200 rounded-full px-3 py-2 text-xs sm:text-sm text-slate-900"
+                      >
+                        <option value="">Everyone</option>
+                        {(usersList || []).map((u: any) => (
+                          <option key={u.id} value={u.id}>{u.user_metadata?.name || u.email || u.id}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {periodLoading && <Loader2 className="w-4 h-4 mb-2.5 animate-spin text-slate-400" />}
+                  </div>
+                  {periodError && <p className="text-xs font-semibold text-rose-600">{periodError}</p>}
+
+                  {periodData && periodData.summary.length > 0 && (
+                    <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                      <table className="w-full text-xs sm:text-sm">
+                        <thead className="bg-slate-50 text-slate-500">
+                          <tr>
+                            {['Salesperson', 'Orders', 'Revenue', 'Cash', 'Online', 'Due', 'Retailers reached', 'New retailers', 'Visits'].map(h => (
+                              <th key={h} className="px-3 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {periodData.summary.map(r => (
+                            <tr key={r.salesPersonId || 'none'} className="border-t border-slate-100">
+                              <td className="px-3 py-2 font-semibold text-slate-900 whitespace-nowrap">{getUserInfo(r.salesPersonId || undefined).name}</td>
+                              <td className="px-3 py-2">{r.orders}</td>
+                              <td className="px-3 py-2 font-mono">₹{r.revenue.toLocaleString('en-IN')}</td>
+                              <td className="px-3 py-2 font-mono">₹{r.cash.toLocaleString('en-IN')}</td>
+                              <td className="px-3 py-2 font-mono">₹{r.online.toLocaleString('en-IN')}</td>
+                              <td className="px-3 py-2 font-mono">₹{r.due.toLocaleString('en-IN')}</td>
+                              <td className="px-3 py-2">{r.retailersReached}</td>
+                              <td className="px-3 py-2">{r.newRetailers}</td>
+                              <td className="px-3 py-2">{r.visits}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {periodData && periodData.hasMore && (
+                    <p className="text-[11px] text-slate-400">
+                      Totals cover the whole period. The list below shows the newest sales; use Show more for older ones.
+                      Search and territory filters apply to the sales loaded so far.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="mb-3 text-[11px] text-slate-400">Showing your sales from the last {SALES_DEFAULT_DAYS} days.</p>
+              )}
+
               {/* MOBILE FEED (< md) */}
               <div className="md:hidden space-y-3">
                 {isPending ? (
@@ -1331,7 +1468,7 @@ export default function SalesClient({
                     <p className="text-xs text-slate-400 mt-1">Use "+ Log Order" to record an order.</p>
                   </div>
                 ) : (
-                  filteredSales.map(sale => {
+                  shownSales.map(sale => {
                     const dt = formatDateTime(sale.created_at || sale.date);
                     const shopName = sale.retailers?.shop_name || 'Retailer';
                     const initials = getInitials(shopName);
@@ -1534,7 +1671,7 @@ export default function SalesClient({
                         </td>
                       </tr>
                     ) : (
-                      filteredSales.map(sale => {
+                      shownSales.map(sale => {
                         const dt = formatDateTime(sale.created_at || sale.date);
                         const shopName = sale.retailers?.shop_name || 'Retailer';
                         const initials = getInitials(shopName);
@@ -1726,6 +1863,22 @@ export default function SalesClient({
                   </tbody>
                 </table>
               </div>
+
+              {(visibleCount < filteredSales.length || periodData?.hasMore) && (
+                <div className="flex justify-center pt-4">
+                  <button
+                    type="button"
+                    disabled={periodLoading}
+                    onClick={() => {
+                      if (visibleCount < filteredSales.length) setVisibleCount(c => c + 100);
+                      else { setVisibleCount(c => c + 100); loadPeriod(period, { append: true }); }
+                    }}
+                    className="h-10 px-5 rounded-full border border-[#0D4728]/30 text-[#0D4728] text-xs sm:text-sm font-semibold bg-white hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {periodLoading ? 'Loading…' : `Show more (${shownSales.length} of ${periodData?.hasMore ? `${filteredSales.length}+` : filteredSales.length} shown)`}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

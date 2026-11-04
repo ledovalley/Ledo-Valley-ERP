@@ -1,7 +1,7 @@
 import { fetchRetailers, fetchSalesRecords, fetchProducts } from "./actions";
 import SalesClient from "./SalesClient";
 import { createClient } from "@/utils/supabase/server";
-import { supabaseAdmin } from "@/utils/supabase/admin";
+import { listAllUsersCached } from "@/utils/usersList";
 import { connection } from "next/server";
 
 export const instant = false;
@@ -23,17 +23,11 @@ export default async function SalesPage() {
     );
   }
 
-  let usersList: any[] = [];
-  if (['admin', 'manager'].includes(currentUserRole)) {
-    try {
-      const { data: usersData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
-      usersList = usersData?.users || [];
-    } catch (e) {
-      console.error("Fetch users error in SalesPage:", e);
-    }
-  }
-
-  const [retailers, salesRecords, products] = await Promise.all([
+  // Everything loads at the same time
+  const [usersList, retailers, salesRecords, products] = await Promise.all([
+    ['admin', 'manager'].includes(currentUserRole)
+      ? listAllUsersCached().catch((e) => { console.error("Fetch users error in SalesPage:", e); return [] as any[]; })
+      : Promise.resolve([] as any[]),
     fetchRetailers(),
     fetchSalesRecords(),
     fetchProducts()

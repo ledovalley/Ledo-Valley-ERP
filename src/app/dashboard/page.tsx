@@ -1,6 +1,8 @@
 import { connection } from "next/server";
 import { getCachedUser } from "@/utils/supabase/server";
 import { supabaseAdmin } from "@/utils/supabase/admin";
+import { listAllUsersCached } from "@/utils/usersList";
+import { selectAllPages } from "@/utils/selectAll";
 import DashboardOverviewClient from "@/components/dashboard/DashboardOverviewClient";
 import { 
   fetchActiveShift, 
@@ -14,6 +16,32 @@ import {
 } from "@/app/dashboard/actions";
 
 export const instant = false;
+
+/**
+ * All-time sales count and revenue, added up in the database (exact however many
+ * sales there are). Falls back to adding up the sales here if the database
+ * function hasn't been installed yet (20261104_sales_summary.sql).
+ */
+async function salesTotals(salesPersonId: string | null): Promise<{ count: number; rev: number }> {
+  const { data, error } = await supabaseAdmin.rpc('fn_sales_summary', { p_from: null, p_to: null, p_sales_person: salesPersonId });
+  if (!error) {
+    const rows = (data as any[]) || [];
+    return {
+      count: rows.reduce((s, r) => s + (Number(r.orders) || 0), 0),
+      rev: rows.reduce((s, r) => s + (Number(r.revenue) || 0), 0)
+    };
+  }
+  try {
+    const rows = await selectAllPages((from, to) => {
+      let q = supabaseAdmin.from('sales_records').select('id, amount').order('id', { ascending: true });
+      if (salesPersonId) q = q.eq('sales_person_id', salesPersonId);
+      return q.range(from, to);
+    });
+    return { count: rows.length, rev: rows.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0) };
+  } catch {
+    return { count: 0, rev: 0 };
+  }
+}
 
 export default async function DashboardPage() {
   await connection();
@@ -38,13 +66,9 @@ export default async function DashboardPage() {
     // Management stats
     isManagement
       ? Promise.all([
-          Promise.resolve(supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })).then(res => res.data?.users?.length || 0).catch(() => 0),
+          listAllUsersCached().then(users => users.length).catch(() => 0),
           Promise.resolve(supabaseAdmin.from('retailers').select('id', { count: 'exact', head: true })).then(res => res.count || 0).catch(() => 0),
-          Promise.resolve(supabaseAdmin.from('sales_records').select('amount', { count: 'exact' }).limit(1000)).then((res: any) => {
-            const count = res.count || 0;
-            const rev = (res.data || []).reduce((acc: number, curr: any) => acc + (Number(curr.amount) || 0), 0);
-            return { count, rev };
-          }).catch(() => ({ count: 0, rev: 0 }))
+          salesTotals(null)
         ] as const)
       : Promise.resolve([0, 0, { count: 0, rev: 0 }] as const),
 
@@ -53,11 +77,7 @@ export default async function DashboardPage() {
       ? Promise.all([
           Promise.resolve(supabaseAdmin.from('retailer_visits').select('id', { count: 'exact', head: true }).eq('sales_person_id', user.id)).then(res => res.count || 0).catch(() => 0),
           Promise.resolve(supabaseAdmin.from('retailers').select('id', { count: 'exact', head: true }).eq('sales_person_id', user.id)).then(res => res.count || 0).catch(() => 0),
-          Promise.resolve(supabaseAdmin.from('sales_records').select('amount', { count: 'exact' }).eq('sales_person_id', user.id).limit(1000)).then((res: any) => {
-            const count = res.count || 0;
-            const rev = (res.data || []).reduce((acc: number, curr: any) => acc + (Number(curr.amount) || 0), 0);
-            return { count, rev };
-          }).catch(() => ({ count: 0, rev: 0 }))
+          salesTotals(user.id)
         ] as const)
       : Promise.resolve([0, 0, { count: 0, rev: 0 }] as const),
 

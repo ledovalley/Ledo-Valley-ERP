@@ -4,6 +4,8 @@ import { createClient } from '@/utils/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { isSessionValid } from '@/app/dashboard/actions'
 import { selectAllPages } from '@/utils/selectAll'
+import { supabaseAdmin } from '@/utils/supabase/admin'
+import { SALES_DEFAULT_DAYS, salesPeriodRange, type SalesPeriodKey } from '@/utils/salesPeriods'
 
 // Retailer Actions
 export async function fetchRetailers() {
@@ -125,24 +127,126 @@ export async function fetchProducts() {
 }
 
 // Sales Record Actions
+const SALE_SELECT = `
+  *,
+  retailers (id, name, shop_name, territory, address, phone, geo_location)
+`
+
+/**
+ * Sales for the Sales page: the last 60 days only (everyone's for admins and
+ * managers, a salesperson's own otherwise). Older sales stay in the database;
+ * admins and managers see other periods with fetchSalesPeriod.
+ */
 export async function fetchSalesRecords() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const role = (user?.app_metadata?.role || '').toLowerCase()
 
   const ownOnly = role !== 'admin' && role !== 'manager'
+  const since = new Date(Date.now() - SALES_DEFAULT_DAYS * 24 * 60 * 60 * 1000).toISOString()
   try {
     return await selectAllPages((from, to) => {
-      let query = supabase.from('sales_records').select(`
-        *,
-        retailers (id, name, shop_name, territory, address, phone, geo_location)
-      `).order('created_at', { ascending: false }).order('id', { ascending: true })
+      let query = supabase.from('sales_records').select(SALE_SELECT)
+        .gte('created_at', since)
+        .order('created_at', { ascending: false }).order('id', { ascending: true })
       if (ownOnly) query = query.eq('sales_person_id', user?.id)
       return query.range(from, to)
     })
   } catch (error) {
     console.error("Fetch Sales Error:", error)
     return []
+  }
+}
+
+export type SalesSummaryRow = {
+  salesPersonId: string | null
+  orders: number
+  revenue: number
+  cash: number
+  online: number
+  due: number
+  retailersReached: number
+  newRetailers: number
+  visits: number
+}
+
+const SALES_PAGE_ROWS = 100
+
+/**
+ * Admins and managers: one period of sales. Returns the totals per salesperson
+ * (added up in the database, exact for any length of period) and the newest 100
+ * sales of that period; call again with the next offset for "Show more".
+ */
+export async function fetchSalesPeriod(input: {
+  period: SalesPeriodKey
+  from?: string
+  to?: string
+  salesPersonId?: string | null
+  offset?: number
+}): Promise<
+  | { success: true; label: string; summary: SalesSummaryRow[]; rows: any[]; hasMore: boolean; offset: number }
+  | { error: string }
+> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const role = (user?.app_metadata?.role || '').toLowerCase()
+  if (!user || !(role === 'admin' || role === 'manager')) {
+    return { error: 'Only admins and managers can look at other periods.' }
+  }
+
+  let range
+  try {
+    range = salesPeriodRange(input.period, input.from, input.to)
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+  const person = input.salesPersonId || null
+  const offset = Math.max(0, Math.floor(Number(input.offset) || 0))
+
+  let rowsQuery = supabase.from('sales_records').select(SALE_SELECT)
+    .gte('created_at', range.from)
+    .order('created_at', { ascending: false }).order('id', { ascending: true })
+  if (range.to) rowsQuery = rowsQuery.lt('created_at', range.to)
+  if (person) rowsQuery = rowsQuery.eq('sales_person_id', person)
+
+  const [summaryRes, rowsRes] = await Promise.all([
+    // Totals only needed once per period, not for every "Show more"
+    offset === 0
+      ? supabaseAdmin.rpc('fn_sales_summary', { p_from: range.from, p_to: range.to, p_sales_person: person })
+      : Promise.resolve({ data: null, error: null }),
+    // One extra row tells whether there is more to show
+    rowsQuery.range(offset, offset + SALES_PAGE_ROWS)
+  ])
+
+  if (summaryRes.error) {
+    return {
+      error: /fn_sales_summary/.test(summaryRes.error.message)
+        ? 'Period totals are not set up yet: run supabase/migrations/20261104_sales_summary.sql in Supabase.'
+        : summaryRes.error.message
+    }
+  }
+  if (rowsRes.error) return { error: rowsRes.error.message }
+
+  const rows = rowsRes.data || []
+  const summary: SalesSummaryRow[] = ((summaryRes.data as any[]) || []).map(r => ({
+    salesPersonId: r.sales_person_id,
+    orders: Number(r.orders) || 0,
+    revenue: Number(r.revenue) || 0,
+    cash: Number(r.cash) || 0,
+    online: Number(r.online) || 0,
+    due: Number(r.due) || 0,
+    retailersReached: Number(r.retailers_reached) || 0,
+    newRetailers: Number(r.new_retailers) || 0,
+    visits: Number(r.visits) || 0
+  })).sort((a, b) => b.revenue - a.revenue)
+
+  return {
+    success: true,
+    label: range.label,
+    summary,
+    rows: rows.slice(0, SALES_PAGE_ROWS),
+    hasMore: rows.length > SALES_PAGE_ROWS,
+    offset
   }
 }
 

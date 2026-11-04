@@ -15,15 +15,16 @@ interface InventoryModuleProps {
   onDeleteLoose: (id: string) => void;
   onPurgeNilLoose: () => void;
   isPurging?: boolean;
-  onEditLooseItem: (id: string, data: Partial<LooseLot>) => void;
-  onEditCatalogProduct: (id: string, data: Partial<CatalogProduct>) => void;
+  /** Each resolves to true only if it saved; forms stay open (with what was typed) otherwise. */
+  onEditLooseItem: (id: string, data: Partial<LooseLot>) => Promise<boolean>;
+  onEditCatalogProduct: (id: string, data: Partial<CatalogProduct>) => Promise<boolean>;
   onDeleteCatalog: (id: string) => void;
   onReceivePacketStock: (productId: string, quantity: number, date: string) => Promise<boolean>;
   isCatalogUnlocked: boolean;
   onUnlockRequest: () => void;
   onLockRequest: () => void;
-  onAddCatalogProduct: (product: { name: string; unit: string; size: number; hsnCode?: string; gstRate?: number }) => void;
-  onLedgerAdjustment?: (targetId: string, amount: number, reason: string) => void;
+  onAddCatalogProduct: (product: { name: string; unit: string; size: number; hsnCode?: string; gstRate?: number }) => Promise<boolean>;
+  onLedgerAdjustment?: (targetId: string, amount: number, reason: string) => Promise<boolean>;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
   systemUser: any;
   historyList: HistoryRecord[];
@@ -160,7 +161,7 @@ export default function InventoryModule({
     setShowReceivePacket(false);
   };
 
-  const handleLedgerAdjustmentSubmit = (e: React.FormEvent) => {
+  const handleLedgerAdjustmentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!onLedgerAdjustment) {
       triggerToast('Ledger adjustment handler not available', 'error');
@@ -171,7 +172,9 @@ export default function InventoryModule({
     if (!ledgerAdjustmentForm.reason.trim()) return triggerToast('Please provide a reason for this adjustment', 'error');
     if (!ledgerAdjustmentForm.targetId) return triggerToast('Please select a target ledger/lot', 'error');
     
-    onLedgerAdjustment(ledgerAdjustmentForm.targetId, amount, ledgerAdjustmentForm.reason.trim());
+    // Close only once it has saved; on failure keep what was typed
+    const saved = await onLedgerAdjustment(ledgerAdjustmentForm.targetId, amount, ledgerAdjustmentForm.reason.trim());
+    if (!saved) return;
     setLedgerAdjustmentForm({ targetId: 'l-balance', amount: '', reason: '' });
     setShowLedgerAdjustment(false);
   };
@@ -268,7 +271,8 @@ export default function InventoryModule({
       if (!window.confirm(lines.join('\n'))) return;
     }
 
-    onEditLooseItem(editingLotId, editLotData);
+    const saved = await onEditLooseItem(editingLotId, editLotData);
+    if (!saved) return; // keep the form open with the changes
     setEditingLotId(null);
     setEditLotData({});
   };
@@ -301,19 +305,20 @@ export default function InventoryModule({
     setEditPacketData({});
   };
 
-  const saveEditingPacket = () => {
+  const saveEditingPacket = async () => {
     if (!editPacketData.name || !editPacketData.unit || editPacketData.size === undefined) {
       triggerToast("Name, Unit, and Multiplier cannot be empty.", "error");
       return;
     }
     if (editingPacketId) {
-      onEditCatalogProduct(editingPacketId, editPacketData);
+      const saved = await onEditCatalogProduct(editingPacketId, editPacketData);
+      if (!saved) return; // keep the form open with the changes
     }
     setEditingPacketId(null);
     setEditPacketData({});
   };
 
-  const handleCreateNewProduct = (e: React.FormEvent) => {
+  const handleCreateNewProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isCatalogUnlocked) {
       triggerToast("Access Denied! Enter Admin PIN to unlock management.", "error");
@@ -321,13 +326,14 @@ export default function InventoryModule({
     }
     if (!newProductForm.name || !newProductForm.size) return triggerToast("All fields are required", "error");
     
-    onAddCatalogProduct({
+    const saved = await onAddCatalogProduct({
       name: newProductForm.name,
       unit: newProductForm.unit,
       size: parseFloat(newProductForm.size),
       hsnCode: newProductForm.hsnCode,
       gstRate: parseFloat(newProductForm.gstRate) || 5
     });
+    if (!saved) return; // keep the form open with what was typed
 
     setNewProductForm({ name: '', unit: 'KG', size: '', hsnCode: '', gstRate: '5' });
     setShowAddNewProduct(false);

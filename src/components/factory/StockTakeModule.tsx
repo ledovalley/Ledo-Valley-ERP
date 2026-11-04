@@ -244,6 +244,17 @@ export default function StockTakeModule({ looseInventory, canManage, triggerToas
   // -------------------------------------------------------------------------
   const lotById = useMemo(() => new Map(looseInventory.map(l => [l.id, l])), [looseInventory]);
 
+  // Saves still running, and lots whose last save failed (read after awaiting, unlike state)
+  const inflightRef = useRef<Record<string, Promise<void>>>({});
+  const failedRef = useRef<Set<string>>(new Set());
+  const runSave = (lotId: string) => {
+    const p = saveLot(lotId).finally(() => {
+      if (inflightRef.current[lotId] === p) delete inflightRef.current[lotId];
+    });
+    inflightRef.current[lotId] = p;
+    return p;
+  };
+
   const saveLot = async (lotId: string) => {
     if (!take) return;
     const d = draftsRef.current[lotId];
@@ -256,25 +267,25 @@ export default function StockTakeModule({ looseInventory, canManage, triggerToas
       // read the latest counts (this can run from a delayed save)
       const existing = countsRef.current.find(c => c.lotId === lotId);
       if (!existing) {
-        setSaveState(s => { const n = { ...s }; delete n[lotId]; return n; });
+        failedRef.current.delete(lotId); setSaveState(s => { const n = { ...s }; delete n[lotId]; return n; });
         return;
       }
       setSaveState(s => ({ ...s, [lotId]: 'saving' }));
       const res = await deleteStockTakeCount(take.id, existing.id);
       if ('error' in res) {
-        setSaveState(s => ({ ...s, [lotId]: 'error' }));
+        failedRef.current.add(lotId); setSaveState(s => ({ ...s, [lotId]: 'error' }));
         triggerToast(res.error, 'error');
         return;
       }
       setCounts(prev => prev.filter(c => c.id !== existing.id));
-      setSaveState(s => { const n = { ...s }; delete n[lotId]; return n; });
+      failedRef.current.delete(lotId); setSaveState(s => { const n = { ...s }; delete n[lotId]; return n; });
       return;
     }
 
     const bags = isSys ? 0 : parseInt(d.bags || '0', 10);
     const kg = parseFloat(d.kg || '0');
     if ((!isSys && (!Number.isInteger(bags) || bags < 0)) || !Number.isFinite(kg) || kg < 0) {
-      setSaveState(s => ({ ...s, [lotId]: 'error' }));
+      failedRef.current.add(lotId); setSaveState(s => ({ ...s, [lotId]: 'error' }));
       return;
     }
 
@@ -290,28 +301,32 @@ export default function StockTakeModule({ looseInventory, canManage, triggerToas
       note: d.note
     });
     if ('error' in res) {
-      setSaveState(s => ({ ...s, [lotId]: 'error' }));
+      failedRef.current.add(lotId); setSaveState(s => ({ ...s, [lotId]: 'error' }));
       triggerToast(res.error, 'error');
       return;
     }
     const saved = res.count;
     setCounts(prev => [...prev.filter(c => c.lotId !== lotId), saved]);
-    setSaveState(s => ({ ...s, [lotId]: 'saved' }));
+    failedRef.current.delete(lotId); setSaveState(s => ({ ...s, [lotId]: 'saved' }));
   };
 
   const scheduleSave = (lotId: string) => {
     if (timersRef.current[lotId]) clearTimeout(timersRef.current[lotId]);
     timersRef.current[lotId] = setTimeout(() => {
       delete timersRef.current[lotId];
-      saveLot(lotId);
+      runSave(lotId);
     }, 900);
   };
 
+  /** Saves everything typed so far, waits for saves already running, and
+   *  returns false if any count is not saved. */
   const flushSaves = async () => {
     const pending = Object.keys(timersRef.current);
     pending.forEach(id => clearTimeout(timersRef.current[id]));
     timersRef.current = {};
-    await Promise.all(pending.map(id => saveLot(id)));
+    pending.forEach(id => runSave(id));
+    await Promise.all(Object.values(inflightRef.current));
+    return failedRef.current.size === 0;
   };
 
   const updateDraft = (lot: LooseLot, field: 'bags' | 'kg' | 'note', value: string) => {
@@ -334,7 +349,7 @@ export default function StockTakeModule({ looseInventory, canManage, triggerToas
     setDrafts(draftsRef.current);
     if (timersRef.current[lot.id]) clearTimeout(timersRef.current[lot.id]);
     delete timersRef.current[lot.id];
-    saveLot(lot.id);
+    runSave(lot.id);
   };
 
   const addNewLot = async () => {
@@ -425,7 +440,13 @@ export default function StockTakeModule({ looseInventory, canManage, triggerToas
 
   const openReview = async () => {
     setBusy(true);
-    await flushSaves();
+    // Never review with a count that didn't save: it would count as "not counted"
+    // and could be set to zero.
+    if (!(await flushSaves())) {
+      setBusy(false);
+      triggerToast('Some counts could not be saved (marked in red). Fix or re-enter them, then review again.', 'error');
+      return;
+    }
     try {
       // Fresh system figures from the database: these are what the update will check against
       const fresh = await fetchLooseLots();
@@ -452,6 +473,10 @@ export default function StockTakeModule({ looseInventory, canManage, triggerToas
 
   const handleApply = async () => {
     if (!take || !snapshot) return;
+    if (failedRef.current.size > 0 || Object.keys(inflightRef.current).length > 0) {
+      triggerToast('Some counts are not saved yet. Go back, fix the counts marked in red, and review again.', 'error');
+      return;
+    }
     setBusy(true);
     const res = await applyStockTake(
       take.id,

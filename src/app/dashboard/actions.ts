@@ -3,6 +3,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { supabaseAdmin } from '@/utils/supabase/admin'
 import { selectAllPages } from '@/utils/selectAll'
+import { listAllUsersCached } from '@/utils/usersList'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 
@@ -106,10 +107,8 @@ export async function fetchActiveFieldDevices() {
 
     let usersMap = new Map<string, any>()
     try {
-      const { data: usersData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
-      if (usersData?.users) {
-        usersMap = new Map(usersData.users.map((u: any) => [u.id, u]))
-      }
+      const users = await listAllUsersCached()
+      usersMap = new Map(users.map((u: any) => [u.id, u]))
     } catch (e) {
       console.error("Admin listUsers error in fetchActiveFieldDevices:", e)
     }
@@ -662,9 +661,9 @@ export async function fetchFieldOperationsTimeline(): Promise<FieldActivityEvent
     const userRole = (user?.app_metadata?.role || '').toLowerCase()
     const isManagement = ['admin', 'manager'].includes(userRole)
 
-    const { data: usersData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+    const allUsers = await listAllUsersCached().catch(() => [] as any[])
     const userMap = new Map<string, string>()
-    usersData?.users?.forEach(u => {
+    allUsers.forEach((u: any) => {
       userMap.set(u.id, u.user_metadata?.name || u.email?.split('@')[0] || 'Field Staff')
     })
 
@@ -823,16 +822,27 @@ export async function fetchWeeklyProgressData(): Promise<WeeklyProgressResponse>
     sunday.setDate(now.getDate() - dayOfWeek)
 
     const ownOnly = !isManagement && !!userId
-    const shifts = await selectAllPages((from, to) => {
-      let shiftsQuery = supabaseAdmin.from('shifts').select('*').order('id', { ascending: true })
-      if (ownOnly) shiftsQuery = shiftsQuery.eq('user_id', userId)
-      return shiftsQuery.range(from, to)
-    })
-    const sales = await selectAllPages((from, to) => {
-      let salesQuery = supabaseAdmin.from('sales_records').select('*').order('id', { ascending: true })
-      if (ownOnly) salesQuery = salesQuery.eq('sales_person_id', userId)
-      return salesQuery.range(from, to)
-    })
+    // Only this week is shown, so only load this week (from 2 days before Sunday,
+    // to cover time zones). Older shifts and sales are never matched below.
+    const weekStart = new Date(sunday.getTime() - 2 * 24 * 60 * 60 * 1000)
+    const weekStartIso = weekStart.toISOString()
+    const weekStartDate = weekStartIso.slice(0, 10)
+    const [shifts, sales] = await Promise.all([
+      selectAllPages((from, to) => {
+        let shiftsQuery = supabaseAdmin.from('shifts').select('*')
+          .or(`start_time.gte.${weekStartIso},created_at.gte.${weekStartIso}`)
+          .order('id', { ascending: true })
+        if (ownOnly) shiftsQuery = shiftsQuery.eq('user_id', userId)
+        return shiftsQuery.range(from, to)
+      }),
+      selectAllPages((from, to) => {
+        let salesQuery = supabaseAdmin.from('sales_records').select('*')
+          .or(`date.gte.${weekStartDate},created_at.gte.${weekStartIso}`)
+          .order('id', { ascending: true })
+        if (ownOnly) salesQuery = salesQuery.eq('sales_person_id', userId)
+        return salesQuery.range(from, to)
+      })
+    ])
 
     const daysLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
     const fullDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
