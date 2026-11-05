@@ -665,6 +665,7 @@ export default function SalesClient({
         setCollectingPaymentSale(null);
         setCollectCashInput('');
         setCollectOnlineInput('');
+        if ('warning' in res && res.warning) alert(res.warning);
       }
     });
   };

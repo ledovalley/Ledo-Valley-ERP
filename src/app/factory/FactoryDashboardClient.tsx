@@ -23,6 +23,7 @@ import { LooseLot, CatalogProduct, BlendProcess, HistoryRecord, SystemUser } fro
 import {
   fetchFactoryState,
   fetchBlendOperationState,
+  fetchHistoryAndGaps,
   receiveLooseLot,
   updateLooseLot,
   deleteLooseLot,
@@ -183,6 +184,14 @@ export default function FactoryDashboardClient({
       setLooseInventory(lots);
       setUnderProcess(blends);
       lastBlendsRef.current = blends;
+      // History and Gap Analysis follow in the background (not waited for), so the
+      // new blend shows in History without slowing the save down
+      fetchHistoryAndGaps()
+        .then(({ history, missingSerials }) => {
+          setHistoryList(mapHistory(history));
+          setMissingBlends(missingSerials);
+        })
+        .catch(() => { /* the next full refresh catches up */ });
       return blends;
     } catch (err) {
       return reloadAll();

@@ -114,7 +114,11 @@ async function loadLooseLots(): Promise<LooseLot[]> {
 
   let data: any[];
   try {
-    data = await selectAllPages((from, to) =>
+    // One request for every lot (fn_factory_loose_lots); 1,000 at a time if that isn't set up yet
+    const { data: all, error: rpcErr } = await supabase.rpc('fn_factory_loose_lots');
+    if (!rpcErr && Array.isArray(all)) {
+      data = all;
+    } else data = await selectAllPages((from, to) =>
       supabase
         .from('factory_loose_lots')
         .select('id, lot_number, mark, grade, bags, weight_per_bag, weight, date, labels')
@@ -239,6 +243,7 @@ async function loadFactoryHistory(limit: number = 50, offset: number = 0): Promi
     .from('factory_history')
     .select('id, type, description, timestamp, user_name, details')
     .order('timestamp', { ascending: false })
+    .order('id', { ascending: false })
     .range(safeOffset, safeOffset + safeLimit - 1);
 
   if (error) {
@@ -325,6 +330,101 @@ export type LotReconciliation = {
   returnsKg: number;
   usedKg: number;
 };
+
+// -----------------------------------------------------------------------------
+// History tab: pages, search and filters over the whole history (20261112_history_pages.sql)
+// -----------------------------------------------------------------------------
+export type HistoryPageFilters = { search?: string; type?: string; userName?: string };
+type HistoryRow = { id: string; type: string; desc: string; timestamp: string; userId?: string; userName?: string; details?: any };
+export type HistoryKpi = { totalYields: number; totalVariance: number; minDate: string; maxDate: string };
+
+const HISTORY_NOT_SET_UP = 'HISTORY_NOT_SET_UP';
+
+function mapHistoryRow(h: any): HistoryRow {
+  return { id: h.id, type: h.type, desc: h.description, timestamp: h.timestamp, userId: h.user_id ?? undefined, userName: h.user_name ?? undefined, details: h.details };
+}
+
+async function loadHistoryPage(f: HistoryPageFilters, offset: number, limit: number) {
+  const { data, error } = await supabaseAdmin.rpc('fn_factory_history_page', {
+    p_query: (f.search || '').trim() || null,
+    p_type: f.type || null,
+    p_user: f.userName || null,
+    p_offset: Math.max(0, Math.floor(Number(offset) || 0)),
+    p_limit: Math.min(Math.max(1, Math.floor(Number(limit) || 20)), 500)
+  });
+  if (error) throw new Error(/fn_factory_history_page/.test(error.message) ? HISTORY_NOT_SET_UP : error.message);
+  const d = (data || {}) as any;
+  return {
+    items: ((d.rows || []) as any[]).map(mapHistoryRow),
+    total: Number(d.total) || 0,
+    kpi: {
+      totalYields: Number(d.kpi?.totalYields) || 0,
+      totalVariance: Number(d.kpi?.totalVariance) || 0,
+      minDate: d.kpi?.minDate || '',
+      maxDate: d.kpi?.maxDate || ''
+    } as HistoryKpi
+  };
+}
+
+/** One page of history, newest first, with how many entries match and the totals for all of them. */
+export async function fetchHistoryPage(input: HistoryPageFilters & { page: number; pageSize: number }): Promise<
+  { items: HistoryRow[]; total: number; kpi: HistoryKpi } | { error: string; notSetUp?: boolean }
+> {
+  try {
+    await enforceFactoryAccess();
+    const size = Math.min(Math.max(1, Math.floor(Number(input.pageSize) || 20)), 100);
+    const page = Math.max(1, Math.floor(Number(input.page) || 1));
+    return await loadHistoryPage(input, (page - 1) * size, size);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return message === HISTORY_NOT_SET_UP ? { error: message, notSetUp: true } : { error: message };
+  }
+}
+
+/** Every user and action type in history, for the filter lists. */
+export async function fetchHistoryFilters(): Promise<{ types: string[]; users: string[] } | { error: string }> {
+  try {
+    await enforceFactoryAccess();
+    const { data, error } = await supabaseAdmin.rpc('fn_factory_history_filters');
+    if (error) return { error: error.message };
+    return { types: ((data as any)?.types || []).map(String), users: ((data as any)?.users || []).map(String) };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** Everything that matches the filters, for CSV / PDF export (up to 20,000 entries). */
+export async function fetchHistoryForExport(input: HistoryPageFilters): Promise<
+  { items: HistoryRow[]; total: number; capped: boolean } | { error: string; notSetUp?: boolean }
+> {
+  try {
+    await enforceFactoryAccess();
+    const MAX = 20000, STEP = 500;
+    const items: HistoryRow[] = [];
+    let total = 0;
+    for (let offset = 0; offset < MAX; offset += STEP) {
+      const page = await loadHistoryPage(input, offset, STEP);
+      total = page.total;
+      items.push(...page.items);
+      if (page.items.length < STEP || items.length >= total) break;
+    }
+    return { items, total, capped: total > items.length };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return message === HISTORY_NOT_SET_UP ? { error: message, notSetUp: true } : { error: message };
+  }
+}
+
+/**
+ * After a blend is saved or edited: History and Gap Analysis, refreshed in the
+ * background so the save itself stays fast and nothing on screen is out of date.
+ */
+export async function fetchHistoryAndGaps(): Promise<{ history: any[]; missingSerials: string[] }> {
+  await enforceFactoryAccess();
+  const [history, missingSerials] = await Promise.all([loadFactoryHistory(50), loadMissingSerials()]);
+  return { history, missingSerials };
+}
+
 
 /**
  * Lot audit trail: every blend that used this lot and how much, read from the
@@ -468,6 +568,13 @@ export async function fetchMissingSerials(): Promise<string[]> {
 }
 
 async function loadMissingSerials(): Promise<string[]> {
+
+  // Worked out inside the database (fn_factory_missing_serials): one small request
+  // however many blends there are. Falls back to the old way if it isn't set up yet.
+  const { data: gaps, error: gapErr } = await supabaseAdmin.rpc('fn_factory_missing_serials');
+  if (!gapErr && Array.isArray(gaps)) {
+    return (gaps as number[]).map(n => Number(n)).map(i => `SL-${i < 10 ? '0' + i : i}`);
+  }
 
   let data: { serial_no: number }[];
   try {

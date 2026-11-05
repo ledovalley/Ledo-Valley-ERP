@@ -1,8 +1,9 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Network, ArrowDown, Search, Download, Filter, FileText, File, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { HistoryRecord, SystemUser } from '@/types/factory';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { fetchHistoryPage, fetchHistoryFilters, fetchHistoryForExport, type HistoryKpi } from '@/app/factory/actions';
 
 // Finalized blends: 'Finalized Process' is the old (Firebase-era) name,
 // 'BLEND_PACKED' is what the database records now.
@@ -45,15 +46,64 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(20);
 
+  // ---------------------------------------------------------------------------
+  // Pages come from the database (whole history: search, filters, totals and
+  // exports cover every entry). If the database function isn't set up yet
+  // (20261112_history_pages.sql), everything works on the newest 50 as before.
+  // ---------------------------------------------------------------------------
+  const [serverMode, setServerMode] = useState(true);
+  const [serverPage, setServerPage] = useState<{ items: HistoryRecord[]; total: number; kpi: HistoryKpi } | null>(null);
+  const [pageLoading, setPageLoading] = useState(false);
+  const [pageError, setPageError] = useState('');
+  const [filterOptions, setFilterOptions] = useState<{ types: string[]; users: string[] } | null>(null);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const requestRef = useRef(0);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  // Newest entry known to the page: when it changes (something was saved), reload
+  const newestId = historyList[0]?.id ?? '';
+
+  useEffect(() => {
+    fetchHistoryFilters()
+      .then(res => { if (!('error' in res)) setFilterOptions(res); })
+      .catch(() => { /* lists fall back to the loaded entries */ });
+  }, [newestId]);
+
+  useEffect(() => {
+    if (!serverMode) return;
+    const req = ++requestRef.current;
+    setPageLoading(true);
+    fetchHistoryPage({ search: debouncedSearch, type: actionFilter, userName: userFilter, page: currentPage, pageSize })
+      .then(res => {
+        if (req !== requestRef.current) return; // a newer request is on its way
+        if ('error' in res) {
+          if (res.notSetUp) { setServerMode(false); setServerPage(null); setPageError(''); }
+          else setPageError(res.error);
+          return;
+        }
+        setPageError('');
+        setServerPage({ items: res.items as HistoryRecord[], total: res.total, kpi: res.kpi });
+      })
+      .catch(err => { if (req === requestRef.current) setPageError(err instanceof Error ? err.message : String(err)); })
+      .finally(() => { if (req === requestRef.current) setPageLoading(false); });
+  }, [serverMode, debouncedSearch, actionFilter, userFilter, currentPage, pageSize, newestId]);
+
   const uniqueUsers = useMemo(() => {
+    if (filterOptions) return filterOptions.users;
     const users = historyList.map(h => h.userName || h.userId).filter(Boolean);
     return [...new Set(users)];
-  }, [historyList]);
+  }, [historyList, filterOptions]);
 
   const uniqueActions = useMemo(() => {
+    if (filterOptions) return filterOptions.types;
     const actions = historyList.map(h => h.type).filter(Boolean);
     return [...new Set(actions)];
-  }, [historyList]);
+  }, [historyList, filterOptions]);
 
   const filteredHistory = useMemo(() => {
     return historyList.filter(h => {
@@ -84,17 +134,24 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
   // Reset to page 1 whenever filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, userFilter, actionFilter, pageSize]);
+  }, [serverMode ? debouncedSearch : searchTerm, userFilter, actionFilter, pageSize]);
 
-  // Paginated slice calculation
-  const totalItems = filteredHistory.length;
+  // Paginated slice calculation (from the database, or from the loaded entries)
+  const useServer = serverMode && serverPage !== null;
+  const totalItems = useServer ? serverPage!.total : filteredHistory.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const paginatedHistory = useMemo(() => {
+    if (useServer) return serverPage!.items;
     const startIdx = (currentPage - 1) * pageSize;
     return filteredHistory.slice(startIdx, startIdx + pageSize);
-  }, [filteredHistory, currentPage, pageSize]);
+  }, [useServer, serverPage, filteredHistory, currentPage, pageSize]);
 
-  const kpiData = useMemo(() => {
+  // If entries were removed from view (e.g. filters) and this page is now past the end, go back
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  const localKpi = useMemo(() => {
     let totalYields = 0;
     let totalVariance = 0;
     let minDate = '';
@@ -125,9 +182,35 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
     return { totalYields, totalVariance, minDate, maxDate };
   }, [filteredHistory]);
 
-  const exportHistoryCSV = () => {
+  // Totals at the top: for everything that matches (database), or the loaded entries
+  const kpiData = useServer ? serverPage!.kpi : localKpi;
+
+  /** Every entry matching the filters, for export: the whole history when the database is set up. */
+  const rowsForExport = async (): Promise<HistoryRecord[] | null> => {
+    if (!serverMode) return filteredHistory;
+    setExporting(true);
+    try {
+      const res = await fetchHistoryForExport({ search: debouncedSearch, type: actionFilter, userName: userFilter });
+      if ('error' in res) {
+        if (res.notSetUp) return filteredHistory;
+        alert(`Could not export: ${res.error}`);
+        return null;
+      }
+      if (res.capped) alert(`Exporting the newest ${res.items.length.toLocaleString('en-IN')} of ${res.total.toLocaleString('en-IN')} matching entries. Use the filters or search to export the rest.`);
+      return res.items as HistoryRecord[];
+    } catch (err) {
+      alert(`Could not export: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exportHistoryCSV = async () => {
+    const rows = await rowsForExport();
+    if (!rows) return;
     let csv = "Blend ID,Blend Name,Batch No,Initiation Date,Completion Date,Total Input Wt (kg),Total Output Wt (kg),Variance / Loss (kg),Returned Loose (kg),Input Lots Details,Final Packets Yield\n";
-    filteredHistory.forEach(h => {
+    rows.forEach(h => {
       const details = h.details;
       if (!details) return;
 
@@ -146,7 +229,9 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
     a.click();
   };
 
-  const exportHistoryPDF = () => {
+  const exportHistoryPDF = async () => {
+    const rows = await rowsForExport();
+    if (!rows) return;
     const doc = new jsPDF('landscape');
 
     doc.setFontSize(16);
@@ -156,7 +241,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
     doc.setTextColor(100);
     doc.text(`Exported on: ${new Date().toLocaleDateString()}`, 14, 28);
 
-    const tableData = filteredHistory.map(h => {
+    const tableData = rows.map(h => {
       const details = h.details;
       if (!details) return [h.id, h.desc, '', '', '', '', ''];
 
@@ -358,12 +443,14 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
             <div className="flex w-full md:w-auto border border-[#0B172B]/10 rounded-xl overflow-hidden shadow-sm shrink-0">
               <button
                 onClick={exportHistoryCSV}
+                disabled={exporting}
                 className="flex-1 md:flex-none px-4 py-3 bg-white hover:bg-[#F0F5F9] text-[#0B172B]/80 text-xs font-bold transition-all flex items-center justify-center gap-2 border-r border-[#0B172B]/10"
               >
                 <Download size={14} /> Export CSV
               </button>
               <button
                 onClick={exportHistoryPDF}
+                disabled={exporting}
                 className="flex-1 md:flex-none px-4 py-3 bg-white hover:bg-[#F0F5F9] text-[#0B172B]/80 text-xs font-bold transition-all flex items-center justify-center gap-2"
               >
                 <File size={14} /> Export PDF
@@ -383,9 +470,9 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                 <th className="p-4 w-[7%] font-bold text-xs text-[#0B172B]/55 uppercase tracking-wider border-b border-[#0B172B]/8 text-center">Audit</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#0B172B]/5 text-sm">
+            <tbody className={`divide-y divide-[#0B172B]/5 text-sm transition-opacity ${pageLoading && paginatedHistory.length > 0 ? "opacity-50" : ""}`}>
               {paginatedHistory.length === 0 ? (
-                <tr><td colSpan={5} className="p-16 text-center text-[#0B172B]/40">No completed blending cycles stored in history logbook.</td></tr>
+                <tr><td colSpan={5} className="p-16 text-center text-[#0B172B]/40">{pageLoading ? 'Loading history…' : pageError ? `Could not load history: ${pageError}` : 'No completed blending cycles stored in history logbook.'}</td></tr>
               ) : (
                 paginatedHistory.map(record => {
                   const details = record.details || {};
@@ -548,6 +635,15 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
           </table>
         </div>
 
+        {/* Where these entries come from */}
+        {(!serverMode || (pageError && paginatedHistory.length > 0)) && (
+          <div className="px-4 py-2 bg-amber-50 border-t border-amber-200 text-xs text-amber-800 font-medium">
+            {!serverMode
+              ? 'Showing only the most recent entries (300 when the page opens, 50 after a change). To page through and search the whole history, run supabase/migrations/20261112_history_pages.sql in Supabase.'
+              : `Could not refresh history: ${pageError}`}
+          </div>
+        )}
+
         {/* Pagination Bar */}
         {totalItems > 0 && (
           <div className="p-4 bg-white border-t border-[#0B172B]/8 flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -563,7 +659,7 @@ export default function HistoryModule({ historyList = [], systemUser, onUndoFina
                 ))}
               </select>
               <span className="ml-2 font-mono">
-                Showing {Math.min((currentPage - 1) * pageSize + 1, totalItems)}–{Math.min(currentPage * pageSize, totalItems)} of {totalItems}
+                Showing {Math.min((currentPage - 1) * pageSize + 1, totalItems)}–{Math.min(currentPage * pageSize, totalItems)} of {totalItems.toLocaleString('en-IN')}{pageLoading ? ' · loading…' : ''}
               </span>
             </div>
 

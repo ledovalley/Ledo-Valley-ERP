@@ -293,7 +293,7 @@ export async function createSaleRecord(formData: FormData) {
     .limit(1)
     .maybeSingle()
 
-  const { data: newSale, error } = await supabase.from('sales_records').insert({
+  const saleRow = {
     retailer_id,
     date: datePart,
     created_at: createdAt,
@@ -307,7 +307,28 @@ export async function createSaleRecord(formData: FormData) {
     delivery_status,
     delivered_at: deliveredAt,
     sales_person_id: user?.id
-  }).select().single()
+  }
+  let { data: newSale, error } = await supabase.from('sales_records').insert(saleRow).select().single()
+
+  // If the delivery columns aren't in the database yet (20261111_sales_delivery_columns.sql
+  // not run), save the order without them rather than losing it, and say so
+  let deliveryWarning: string | undefined
+  // (leave out only the column that is missing, so a Pending order still saves as Pending
+  // when just delivered_at is missing)
+  if (error && /delivered_at/.test(error.message) && !/delivery_status/.test(error.message)) {
+    const { delivered_at: _da, ...withoutDate } = saleRow
+    const retry = await supabase.from('sales_records').insert(withoutDate).select().single()
+    newSale = retry.data
+    error = retry.error
+    if (!error) deliveryWarning = 'Order saved, but its delivery date was not recorded: run supabase/migrations/20261111_sales_delivery_columns.sql in Supabase.'
+  }
+  if (error && /delivery_status/.test(error.message)) {
+    const { delivery_status: _ds, delivered_at: _da, ...withoutDelivery } = saleRow
+    const retry = await supabase.from('sales_records').insert(withoutDelivery).select().single()
+    newSale = retry.data
+    error = retry.error
+    if (!error) deliveryWarning = 'Order saved, but its delivery status was not recorded: run supabase/migrations/20261111_sales_delivery_columns.sql in Supabase.'
+  }
 
   if (error) return { error: error.message }
 
@@ -339,14 +360,14 @@ export async function createSaleRecord(formData: FormData) {
       return {
         success: true,
         sale: newSale,
-        warning: 'Order saved, but your shift totals could not be updated. Please tell your manager.'
+        warning: ['Order saved, but your shift totals could not be updated. Please tell your manager.', deliveryWarning].filter(Boolean).join(' ')
       }
     }
   }
   
   revalidatePath('/dashboard/sales')
   revalidatePath('/dashboard')
-  return { success: true, sale: newSale }
+  return { success: true, sale: newSale, warning: deliveryWarning }
 }
 
 // Log "No Order" Retailer Visit
@@ -428,6 +449,9 @@ export async function updateSaleDeliveryStatus(saleId: string, deliveryStatus: '
 }
 
 // Record Payment Collection for an Existing Order
+// One database step (fn_record_sale_payment): locks the order so two payments at
+// the same moment can't overwrite each other, refuses more than is due, adds the
+// money to the collector's running shift, and keeps a record of the payment.
 export async function collectSalePayment(
   saleId: string,
   paymentData: { cashAmount: number; onlineAmount: number }
@@ -440,69 +464,42 @@ export async function collectSalePayment(
 
   if (!saleId) return { error: "Sale ID is required." }
 
-  const cash = Math.max(0, Number(paymentData.cashAmount) || 0)
-  const online = Math.max(0, Number(paymentData.onlineAmount) || 0)
-  const additionalPaid = cash + online
-
-  if (additionalPaid <= 0) {
+  const cash = Number(paymentData.cashAmount) || 0
+  const online = Number(paymentData.onlineAmount) || 0
+  if (!Number.isFinite(cash) || !Number.isFinite(online) || cash < 0 || online < 0) {
+    return { error: "Amounts cannot be negative." }
+  }
+  if (cash + online <= 0) {
     return { error: "Payment amount must be greater than zero." }
   }
 
-  // Fetch current sale to calculate new totals
-  const { data: sale, error: fetchErr } = await supabase
-    .from('sales_records')
-    .select('*')
-    .eq('id', saleId)
-    .single()
-
-  if (fetchErr || !sale) {
-    return { error: fetchErr?.message || "Order not found." }
+  const role = (user.app_metadata?.role || '').toLowerCase()
+  const { data: result, error } = await supabaseAdmin.rpc('fn_record_sale_payment', {
+    p_sale_id: String(saleId),
+    p_cash: cash,
+    p_online: online,
+    p_user_id: user.id,
+    p_user_name: (user.user_metadata?.name as string) || user.email || null,
+    p_is_management: role === 'admin' || role === 'manager'
+  })
+  if (error) {
+    return {
+      error: /fn_record_sale_payment/.test(error.message)
+        ? 'Payment recording is not set up yet: run supabase/migrations/20261110_sales_payments.sql in Supabase. Nothing was saved.'
+        : error.message
+    }
   }
 
-  const newCash = Number(sale.cash_amount || 0) + cash
-  const newOnline = Number(sale.online_amount || 0) + online
-  const totalPaid = newCash + newOnline
-  const totalAmount = Number(sale.amount || 0)
-  const newDue = Math.max(0, totalAmount - totalPaid)
-  const newStatus = newDue <= 0 ? 'paid' : 'partial'
-
-  const { data: updated, error: updateErr } = await supabase
-    .from('sales_records')
-    .update({
-      cash_amount: newCash,
-      online_amount: newOnline,
-      due_amount: newDue,
-      payment_status: newStatus
-    })
-    .eq('id', saleId)
-    .select()
-    .single()
-
-  if (updateErr) return { error: updateErr.message }
-
-  // If rep has active shift, reflect the new cash/online collection
-  const { data: activeShift } = await supabase
-    .from('shifts')
-    .select('id')
-    .eq('user_id', user.id)
-    .eq('status', 'active')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (activeShift) {
-    await supabase.rpc('fn_record_sale_on_shift', {
-      p_shift_id: activeShift.id,
-      p_order_value: 0,
-      p_cash_amount: cash,
-      p_online_amount: online,
-      p_due_amount: -additionalPaid
-    })
-  }
+  const { data: updated } = await supabaseAdmin.from('sales_records').select('*').eq('id', saleId).maybeSingle()
 
   revalidatePath('/dashboard/sales')
   revalidatePath('/dashboard')
-  return { success: true, sale: updated }
+  return {
+    success: true,
+    sale: updated,
+    addedToShift: !!(result as any)?.addedToShift,
+    warning: (result as any)?.addedToShift ? undefined : 'Payment saved on the order. You have no running shift, so it was not added to a shift.'
+  }
 }
 
 // Fetch Retailer Visits
