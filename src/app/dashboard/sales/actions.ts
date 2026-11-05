@@ -7,7 +7,7 @@ import { selectAllPages } from '@/utils/selectAll'
 import { supabaseAdmin } from '@/utils/supabase/admin'
 import { SALES_DEFAULT_DAYS, salesPeriodRange, type SalesPeriodKey } from '@/utils/salesPeriods'
 import { listAllUsersCached } from '@/utils/usersList'
-import { weekRange, istDate, isYmd, mondayOf } from '@/utils/allowanceWeek'
+import { weekRange, istDate, isYmd, mondayOf, addDays } from '@/utils/allowanceWeek'
 import { checkDeletePassword } from '@/utils/deletePassword'
 
 // Retailer Actions
@@ -598,12 +598,16 @@ async function requireAdmin(): Promise<{ user: any } | { error: string }> {
 }
 
 /** The week worked out from shifts and today's rates. */
-async function liveWeek(monday: string) {
+const SHIFT_COLUMNS = 'id, user_id, status, start_time, created_at, odometer_start, odometer_end, total_distance'
+// Extra details only the Excel report needs (kept separate, so the tab never depends on them)
+const SHIFT_REPORT_COLUMNS = SHIFT_COLUMNS + ', end_time, vehicle_type, start_location, end_location, total_paused_seconds, orders_count, visits_count, total_order_value, cash_collected, online_collected, market_due'
+
+async function liveWeek(monday: string, detailed = false) {
   const week = weekRange(monday)
   const [shifts, users] = await Promise.all([
     selectAllPages((from, to) =>
       supabaseAdmin.from('shifts')
-        .select('id, user_id, status, start_time, created_at, odometer_start, odometer_end, total_distance')
+        .select(detailed ? SHIFT_REPORT_COLUMNS : SHIFT_COLUMNS)
         // shifts started this week (older shifts without a start time go by when they were created)
         .or(`and(start_time.gte.${week.from},start_time.lt.${week.to}),and(start_time.is.null,created_at.gte.${week.from},created_at.lt.${week.to})`)
         .order('id', { ascending: true })
@@ -660,29 +664,35 @@ async function liveWeek(monday: string) {
   }
   rows.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
-  return { week, rows, totals: sumTotals(rows), weekEnded: today > week.sunday, users }
+  return { week, rows, totals: sumTotals(rows), weekEnded: today > week.sunday, users, byUser }
 }
 
 export type AllowancePaidInfo = { paidAt: string; paidByName: string; liveTotal: number; changedSincePaid: boolean }
 
-export async function fetchWeeklyAllowances(weekStart?: string): Promise<
-  | { success: true; monday: string; label: string; rows: AllowanceRow[]; totals: WeekTotals; weekEnded: boolean; paid: AllowancePaidInfo | null }
-  | { error: string }
-> {
+type WeekView = { success: true; monday: string; label: string; rows: AllowanceRow[]; totals: WeekTotals; weekEnded: boolean; paid: AllowancePaidInfo | null }
+
+export async function fetchWeeklyAllowances(weekStart?: string): Promise<WeekView | { error: string }> {
   const auth = await requireAdmin()
   if ('error' in auth) return { error: auth.error }
-
-  const monday = mondayOf(isYmd(weekStart) ? weekStart : new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }))
   try {
+    return (await weekView(weekStart)).view
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+async function weekView(weekStart?: string, detailed = false): Promise<{ view: WeekView; live: Awaited<ReturnType<typeof liveWeek>> }> {
+  const monday = mondayOf(isYmd(weekStart) ? weekStart : new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }))
+  {
     const [live, paidRes] = await Promise.all([
-      liveWeek(monday),
+      liveWeek(monday, detailed),
       supabaseAdmin.from('allowance_payouts').select('*').eq('week_start', monday).is('cancelled_at', null)
     ])
     // Paid-weeks table not set up yet: show the live figures (nothing can be marked paid)
     const paidRows = paidRes.error ? [] : (paidRes.data || [])
 
     if (paidRows.length === 0) {
-      return { success: true, monday, label: live.week.label, rows: live.rows, totals: live.totals, weekEnded: live.weekEnded, paid: null }
+      return { live, view: { success: true, monday, label: live.week.label, rows: live.rows, totals: live.totals, weekEnded: live.weekEnded, paid: null } }
     }
 
     // Paid week: always the amounts saved when it was marked paid
@@ -707,9 +717,69 @@ export async function fetchWeeklyAllowances(weekStart?: string): Promise<
     const changed = Math.abs(live.totals.total - totals.total) > 0.005 ||
       liveWorked.length !== rows.length || liveWorked.some(r => !rows.find(x => x.userId === r.userId))
     return {
-      success: true, monday, label: live.week.label, rows, totals, weekEnded: live.weekEnded,
-      paid: { paidAt: paidRows[0].paid_at, paidByName: paidRows[0].paid_by_name || '', liveTotal: live.totals.total, changedSincePaid: changed }
+      live,
+      view: {
+        success: true, monday, label: live.week.label, rows, totals, weekEnded: live.weekEnded,
+        paid: { paidAt: paidRows[0].paid_at, paidByName: paidRows[0].paid_by_name || '', liveTotal: live.totals.total, changedSincePaid: changed }
+      }
     }
+  }
+}
+
+export type AllowanceShift = {
+  date: string
+  start: string | null
+  end: string | null
+  status: string
+  vehicle: string
+  odometerStart: number | null
+  odometerEnd: number | null
+  km: number | null // null = still running
+  pausedMinutes: number
+  startLocation: string
+  endLocation: string
+  orders: number
+  visits: number
+  orderValue: number
+  cash: number
+  online: number
+  due: number
+}
+
+/** Everything for the detailed Excel report: the week as shown, plus every shift per person. Read-only. */
+export async function fetchWeeklyAllowanceReport(weekStart?: string): Promise<
+  (WeekView & { shifts: Record<string, AllowanceShift[]> }) | { error: string }
+> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  try {
+    const { view, live } = await weekView(weekStart, true)
+    const n = (v: any) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
+    const shifts: Record<string, AllowanceShift[]> = {}
+    for (const r of view.rows) {
+      shifts[r.userId] = (live.byUser.get(r.userId) || [])
+        .map((s: any) => ({
+          date: istDate(s.start_time || s.created_at),
+          start: s.start_time || s.created_at || null,
+          end: s.end_time || null,
+          status: String(s.status || ''),
+          vehicle: s.vehicle_type || '',
+          odometerStart: n(s.odometer_start),
+          odometerEnd: n(s.odometer_end),
+          km: shiftKm(s),
+          pausedMinutes: Math.round((Number(s.total_paused_seconds) || 0) / 60),
+          startLocation: s.start_location || '',
+          endLocation: s.end_location || '',
+          orders: Number(s.orders_count) || 0,
+          visits: Number(s.visits_count) || 0,
+          orderValue: Number(s.total_order_value) || 0,
+          cash: Number(s.cash_collected) || 0,
+          online: Number(s.online_collected) || 0,
+          due: Number(s.market_due) || 0
+        }))
+        .sort((a: AllowanceShift, b: AllowanceShift) => String(a.start).localeCompare(String(b.start)))
+    }
+    return { ...view, shifts }
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
   }
@@ -789,4 +859,133 @@ export async function undoAllowanceWeekPaid(monday: string, deletePassword: stri
   if (!data || data.length === 0) return { error: 'This week is not marked as paid.' }
   revalidatePath('/dashboard/sales')
   return { success: true }
+}
+
+// -----------------------------------------------------------------------------
+// Monthly allowance report (admins only, read-only)
+//
+// One calendar month (India time). Days in weeks already marked as paid use the
+// days, km and rates saved when that week was paid, so the month always matches
+// what was paid week by week. Other days use the shifts and today's rates.
+// -----------------------------------------------------------------------------
+export type MonthDay = { date: string; shifts: number; km: number; openShifts: number; foodRate: number; kmRate: number; food: number; travel: number; paid: boolean }
+export type MonthPerson = {
+  userId: string; name: string; role: string; daysPresent: number; km: number; food: number; travel: number; total: number
+  openShifts: number; noRates: boolean; foodRate: number; kmRate: number; days: MonthDay[]
+}
+export type MonthWeek = { monday: string; label: string; paid: boolean; paidAt: string | null; paidByName: string }
+
+export async function fetchAllowanceMonthReport(month: string): Promise<
+  | { success: true; month: string; label: string; people: MonthPerson[]; weeks: MonthWeek[]; shifts: Record<string, AllowanceShift[]>; totals: WeekTotals; monthEnded: boolean }
+  | { error: string }
+> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month || '')) return { error: 'Choose a month.' }
+
+  const [y, m] = month.split('-').map(Number)
+  const first = `${month}-01`
+  const nextMonth = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`
+  const from = `${first}T00:00:00+05:30`, to = `${nextMonth}T00:00:00+05:30`
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  const lastDate = `${month}-${String(lastDay).padStart(2, '0')}`
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+
+  try {
+    const [shiftRows, users, paidRes] = await Promise.all([
+      selectAllPages((a, b) =>
+        supabaseAdmin.from('shifts')
+          .select(SHIFT_REPORT_COLUMNS)
+          .or(`and(start_time.gte.${from},start_time.lt.${to}),and(start_time.is.null,created_at.gte.${from},created_at.lt.${to})`)
+          .order('id', { ascending: true })
+          .range(a, b)
+      ),
+      listAllUsersCached(),
+      supabaseAdmin.from('allowance_payouts').select('*')
+        .gte('week_start', mondayOf(first)).lte('week_start', lastDate).is('cancelled_at', null)
+    ])
+    const payouts = paidRes.error ? [] : (paidRes.data || [])
+    const paidBy = new Map<string, any>() // `${user}|${monday}` -> payout
+    for (const p of payouts as any[]) paidBy.set(`${p.user_id}|${p.week_start}`, p)
+
+    // weeks touching this month
+    const weeks: MonthWeek[] = []
+    for (let wk = mondayOf(first); wk <= lastDate; wk = addDays(wk, 7)) {
+      const any = (payouts as any[]).find(p => p.week_start === wk)
+      weeks.push({ monday: wk, label: weekRange(wk).label, paid: !!any, paidAt: any?.paid_at || null, paidByName: any?.paid_by_name || '' })
+    }
+
+    const byUser = new Map<string, any[]>()
+    for (const s of shiftRows as any[]) {
+      if (!s.user_id) continue
+      const l = byUser.get(s.user_id) || []; l.push(s); byUser.set(s.user_id, l)
+    }
+
+    const people: MonthPerson[] = []
+    const shifts: Record<string, AllowanceShift[]> = {}
+    const n = (v: any) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
+    const userIds = new Set<string>([...byUser.keys(), ...(payouts as any[]).map(p => p.user_id)])
+    for (const u of users) {
+      const rates = allowanceRates(u.app_metadata)
+      if (!userIds.has(u.id)) continue
+      const days = new Map<string, MonthDay>()
+      // 1. days from shifts, only for weeks NOT paid for this person
+      for (const s of byUser.get(u.id) || []) {
+        const date = istDate(s.start_time || s.created_at)
+        if (date < first || date > lastDate) continue
+        if (paidBy.has(`${u.id}|${mondayOf(date)}`)) continue
+        const d = days.get(date) || { date, shifts: 0, km: 0, openShifts: 0, foodRate: rates.foodRate, kmRate: rates.kmRate, food: 0, travel: 0, paid: false }
+        d.shifts += 1
+        const km = shiftKm(s)
+        if (km === null) d.openShifts += 1; else d.km = round2(d.km + km)
+        days.set(date, d)
+      }
+      // 2. days from paid weeks, as saved
+      for (const p of payouts as any[]) {
+        if (p.user_id !== u.id) continue
+        for (const sd of (Array.isArray(p.days) ? p.days : []) as any[]) {
+          if (!sd?.date || sd.date < first || sd.date > lastDate) continue
+          days.set(sd.date, { date: sd.date, shifts: Number(sd.shifts) || 0, km: Number(sd.km) || 0, openShifts: 0,
+            foodRate: Number(p.food_rate) || 0, kmRate: Number(p.km_rate) || 0, food: 0, travel: 0, paid: true })
+        }
+      }
+      if (days.size === 0) continue
+      const list = [...days.values()].sort((a, b) => a.date.localeCompare(b.date))
+      // per-day amounts unrounded; each person's totals are rounded once (as when a week is paid)
+      for (const d of list) { d.food = d.foodRate; d.travel = d.km * d.kmRate }
+      const food = round2(list.reduce((t, d) => t + d.food, 0))
+      const travel = round2(list.reduce((t, d) => t + d.travel, 0))
+      people.push({
+        userId: u.id,
+        name: u.user_metadata?.name || u.user_metadata?.full_name || u.email?.split('@')[0] || 'User',
+        role: u.app_metadata?.role || '',
+        daysPresent: list.length,
+        km: round2(list.reduce((t, d) => t + d.km, 0)),
+        food, travel, total: round2(food + travel),
+        openShifts: list.reduce((t, d) => t + d.openShifts, 0),
+        noRates: list.every(d => !(d.foodRate > 0) && !(d.kmRate > 0)),
+        foodRate: rates.foodRate, kmRate: rates.kmRate,
+        days: list
+      })
+      shifts[u.id] = (byUser.get(u.id) || [])
+        .filter((s: any) => { const d = istDate(s.start_time || s.created_at); return d >= first && d <= lastDate })
+        .map((s: any) => ({
+          date: istDate(s.start_time || s.created_at), start: s.start_time || s.created_at || null, end: s.end_time || null,
+          status: String(s.status || ''), vehicle: s.vehicle_type || '', odometerStart: n(s.odometer_start), odometerEnd: n(s.odometer_end),
+          km: shiftKm(s), pausedMinutes: Math.round((Number(s.total_paused_seconds) || 0) / 60),
+          startLocation: s.start_location || '', endLocation: s.end_location || '',
+          orders: Number(s.orders_count) || 0, visits: Number(s.visits_count) || 0, orderValue: Number(s.total_order_value) || 0,
+          cash: Number(s.cash_collected) || 0, online: Number(s.online_collected) || 0, due: Number(s.market_due) || 0
+        }))
+        .sort((a: AllowanceShift, b: AllowanceShift) => String(a.start).localeCompare(String(a.start)))
+    }
+    people.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
+    const totals = people.reduce((t, r) => ({
+      food: round2(t.food + r.food), travel: round2(t.travel + r.travel), total: round2(t.total + r.total), km: round2(t.km + r.km), days: t.days + r.daysPresent
+    }), { food: 0, travel: 0, total: 0, km: 0, days: 0 })
+    return { success: true, month, label: `${MONTHS[m - 1]} ${y}`, people, weeks, shifts, totals, monthEnded: today > lastDate }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
 }

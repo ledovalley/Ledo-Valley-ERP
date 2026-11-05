@@ -750,6 +750,14 @@ export default function SalesClient({
 
   const totalOrdersCount = filteredSales.length;
   const totalPages = Math.max(1, Math.ceil(totalOrdersCount / pageSize));
+  // A longer period (admins) arrives 100 orders at a time: more may be waiting on the server
+  const moreOnServer = !!periodData?.hasMore;
+  const goNextPage = async () => {
+    if (currentPage < totalPages) { setCurrentPage(p => p + 1); return; }
+    if (!moreOnServer || periodLoading) return;
+    await loadPeriod(period, { append: true });
+    setCurrentPage(p => p + 1);
+  };
 
   // Ensure current page does not exceed total pages when list shrinks
   useEffect(() => {
@@ -1915,7 +1923,7 @@ export default function SalesClient({
                     </select>
                     <span className="ml-1 text-slate-400">·</span>
                     <span className="font-mono text-slate-600">
-                      Showing {Math.min((currentPage - 1) * pageSize + 1, totalOrdersCount)}–{Math.min(currentPage * pageSize, totalOrdersCount)} of {totalOrdersCount.toLocaleString('en-IN')}
+                      Showing {Math.min((currentPage - 1) * pageSize + 1, totalOrdersCount)}–{Math.min(currentPage * pageSize, totalOrdersCount)} of {totalOrdersCount.toLocaleString('en-IN')}{moreOnServer ? '+' : ''}{periodLoading ? ' · loading…' : ''}
                     </span>
                   </div>
 
@@ -1937,14 +1945,14 @@ export default function SalesClient({
                     <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200/80 text-xs font-semibold text-slate-700">
                       <span className="font-mono text-slate-900">{currentPage}</span>
                       <span className="text-slate-400">/</span>
-                      <span className="font-mono text-slate-500">{totalPages}</span>
+                      <span className="font-mono text-slate-500">{totalPages}{moreOnServer ? '+' : ''}</span>
                     </div>
 
                     {/* Next Button */}
                     <button
                       type="button"
-                      disabled={currentPage >= totalPages}
-                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={(currentPage >= totalPages && !moreOnServer) || periodLoading}
+                      onClick={goNextPage}
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold disabled:opacity-30 disabled:pointer-events-none transition-all shadow-2xs hover:shadow-xs active:scale-95"
                       title="Next page"
                     >

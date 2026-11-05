@@ -5,7 +5,8 @@ import {
   Wallet, Bike, Utensils, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   Download, Loader2, AlertTriangle, Users, Info, CheckCircle2, RotateCcw
 } from 'lucide-react';
-import { fetchWeeklyAllowances, markAllowanceWeekPaid, undoAllowanceWeekPaid, type AllowanceRow, type AllowancePaidInfo } from './actions';
+import { fetchWeeklyAllowances, fetchWeeklyAllowanceReport, fetchAllowanceMonthReport, markAllowanceWeekPaid, undoAllowanceWeekPaid, type AllowanceRow, type AllowancePaidInfo } from './actions';
+import { buildAllowanceWorkbook, saveXlsx } from './allowanceReport';
 import { addDays, dayLabel, mondayOf, todayIST } from '@/utils/allowanceWeek';
 
 type WeekData = {
@@ -92,23 +93,69 @@ export default function WeeklyAllowances() {
     }
   };
 
-  const downloadCSV = () => {
-    if (!shown) return;
-    const q = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
-    const lines = [
-      ['Week', 'Name', 'Role', 'Days present', 'Food rate (Rs/day)', 'Food (Rs)', 'Km travelled', 'Rate (Rs/km)', 'Travel (Rs)', 'Total (Rs)', 'Shifts not ended'].map(q).join(','),
-      ...shown.rows.map(r => [shown.label, r.name, r.role, r.daysPresent, r.foodRate, r.food, r.km, r.kmRate, r.travel, r.total, r.openShifts].map(q).join(',')),
-      ['', 'TOTAL', '', shown.totals.days, '', shown.totals.food, shown.totals.km, '', shown.totals.travel, shown.totals.total, openShifts].map(q).join(','),
-      '',
-      q(shown.paid ? `Paid on ${new Date(shown.paid.paidAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}${shown.paid.paidByName ? ' by ' + shown.paid.paidByName : ''} (saved amounts)` : 'Not marked as paid (worked out with current rates)')
-    ];
-    const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Weekly_Allowance_${shown.monday}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const [downloading, setDownloading] = useState(false);
+
+  const thisMonth = todayIST().slice(0, 7);
+  const [reportMonth, setReportMonth] = useState(thisMonth);
+
+  /** Detailed Excel report for the week on screen: Summary + one sheet per person (every shift, odometer readings, day by day). */
+  const downloadReport = async () => {
+    if (!shown || downloading) return;
+    setDownloading(true);
+    try {
+      const rep = await fetchWeeklyAllowanceReport(shown.monday);
+      if ('error' in rep) { alert(`Could not make the report: ${rep.error}`); return; }
+      const status = rep.paid
+        ? `Paid on ${new Date(rep.paid.paidAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}${rep.paid.paidByName ? ' by ' + rep.paid.paidByName : ''}. Amounts are the ones saved then.`
+        : rep.weekEnded ? 'Not marked as paid yet. Amounts use the current rates.' : 'Week still going on. Amounts can still change.';
+      const bytes = buildAllowanceWorkbook({
+        title: 'Weekly allowance report',
+        info: [
+          ['Week', rep.label],
+          ['Status', status],
+          ...(rep.paid?.changedSincePaid ? [['Note', `Shifts or rates changed after this week was paid. Worked out today it would be Rs ${rep.paid.liveTotal}. The paid amounts are unchanged.`] as [string, string]] : [])
+        ],
+        personNote: rep.paid ? 'Shift details are as recorded now. The amounts in Totals are the ones saved when the week was paid.' : undefined,
+        people: rep.rows.map(r => ({
+          ...r,
+          days: r.days.map(d => ({ date: d.date, shifts: d.shifts, km: d.km, foodRate: r.foodRate, kmRate: r.kmRate, food: r.foodRate, travel: d.km * r.kmRate }))
+        })),
+        shifts: rep.shifts
+      });
+      saveXlsx(bytes, `Weekly_Allowance_${rep.monday}.xlsx`);
+    } catch (err) {
+      alert(`Could not make the report: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  /** The same detailed report for a whole calendar month. */
+  const downloadMonth = async () => {
+    if (downloading || !reportMonth) return;
+    setDownloading(true);
+    try {
+      const rep = await fetchAllowanceMonthReport(reportMonth);
+      if ('error' in rep) { alert(`Could not make the report: ${rep.error}`); return; }
+      if (rep.people.length === 0) { alert(`No shifts in ${rep.label}.`); return; }
+      const paidWeeks = rep.weeks.filter(w => w.paid).length;
+      const bytes = buildAllowanceWorkbook({
+        title: 'Monthly allowance report',
+        info: [
+          ['Month', rep.label],
+          ['Status', `${rep.monthEnded ? 'Month ended.' : 'Month still going on: amounts can still change.'} ${paidWeeks} of ${rep.weeks.length} weeks touching this month are marked as paid.`]
+        ],
+        people: rep.people,
+        shifts: rep.shifts,
+        weeks: rep.weeks,
+        showPaidColumn: true
+      });
+      saveXlsx(bytes, `Monthly_Allowance_${rep.month}.xlsx`);
+    } catch (err) {
+      alert(`Could not make the report: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDownloading(false);
+    }
   };
 
   return (
@@ -169,13 +216,32 @@ export default function WeeklyAllowances() {
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Mark week as paid
             </button>
           )}
+          <div className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white pl-3 pr-1 py-1">
+            <span className="text-xs text-slate-500">Month</span>
+            <input
+              type="month"
+              value={reportMonth}
+              max={thisMonth}
+              onChange={e => setReportMonth(e.target.value)}
+              className="bg-transparent text-xs text-slate-800 outline-none"
+              aria-label="Month for the monthly report"
+            />
+            <button
+              type="button"
+              onClick={downloadMonth}
+              disabled={downloading || !reportMonth}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900 text-white text-xs font-semibold disabled:opacity-40"
+            >
+              <Download className="w-3.5 h-3.5" /> Monthly report
+            </button>
+          </div>
           <button
             type="button"
-            onClick={downloadCSV}
-            disabled={!shown || shown.rows.length === 0}
+            onClick={downloadReport}
+            disabled={!shown || shown.rows.length === 0 || downloading}
             className="flex items-center gap-2 px-4 py-2 rounded-full bg-[#0D4728] text-[#FFF9CD] text-xs sm:text-sm font-semibold disabled:opacity-40"
           >
-            <Download className="w-4 h-4" /> Download CSV
+            {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Weekly report (Excel)
           </button>
         </div>
       </div>
