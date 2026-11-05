@@ -6,6 +6,9 @@ import { isSessionValid } from '@/app/dashboard/actions'
 import { selectAllPages } from '@/utils/selectAll'
 import { supabaseAdmin } from '@/utils/supabase/admin'
 import { SALES_DEFAULT_DAYS, salesPeriodRange, type SalesPeriodKey } from '@/utils/salesPeriods'
+import { listAllUsersCached } from '@/utils/usersList'
+import { weekRange, istDate, isYmd, mondayOf } from '@/utils/allowanceWeek'
+import { checkDeletePassword } from '@/utils/deletePassword'
 
 // Retailer Actions
 export async function fetchRetailers() {
@@ -523,4 +526,267 @@ export async function fetchRetailerVisits(limit = 50) {
     return []
   }
   return data || []
+}
+
+// -----------------------------------------------------------------------------
+// Weekly allowance (admins only)
+//
+// For each person, for one week (Monday to Sunday, India time):
+//   food    = days present x their Food Allowance / DA rate (per day)
+//   travel  = km travelled x their Bike Allowance rate (per km)
+//   total   = food + travel
+// A day counts as present if they started at least one shift that day (same rule
+// as the dashboard attendance). Km come from ended shifts (closing minus opening
+// odometer); a shift still running has its km counted once it is ended.
+// Rates are the ones set for each user on the Users page. A week marked as paid
+// always shows the amounts saved at that moment (allowance_payouts).
+// -----------------------------------------------------------------------------
+export type AllowanceDay = { date: string; shifts: number; km: number; openShifts: number }
+export type AllowanceRow = {
+  userId: string
+  name: string
+  role: string
+  daysPresent: number
+  foodRate: number
+  food: number
+  km: number
+  kmRate: number
+  travel: number
+  total: number
+  openShifts: number
+  noRates: boolean
+  days: AllowanceDay[]
+}
+
+const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
+
+function allowanceRates(meta: any) {
+  const list = Array.isArray(meta?.allowances) ? meta.allowances : []
+  const rateOf = (id: string) => {
+    const a = list.find((x: any) => (x && typeof x === 'object' ? x.id : x) === id)
+    const r = a && typeof a === 'object' ? Number(a.rate) : 0
+    return Number.isFinite(r) && r > 0 ? r : 0
+  }
+  return { foodRate: rateOf('food_da'), kmRate: rateOf('bike_allowance') }
+}
+
+function shiftKm(s: any) {
+  if (!['completed', 'ended'].includes(String(s.status || '').toLowerCase())) return null // still running
+  const total = Number(s.total_distance)
+  if (Number.isFinite(total) && total > 0) return total
+  const start = Number(s.odometer_start), end = Number(s.odometer_end)
+  if (Number.isFinite(start) && Number.isFinite(end) && end > start) return end - start
+  return 0
+}
+
+type WeekTotals = { food: number; travel: number; total: number; km: number; days: number }
+
+function sumTotals(rows: AllowanceRow[]): WeekTotals {
+  return rows.reduce((t, r) => ({
+    food: round2(t.food + r.food), travel: round2(t.travel + r.travel), total: round2(t.total + r.total),
+    km: round2(t.km + r.km), days: t.days + r.daysPresent
+  }), { food: 0, travel: 0, total: 0, km: 0, days: 0 })
+}
+
+async function requireAdmin(): Promise<{ user: any } | { error: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const role = (user?.app_metadata?.role || '').toLowerCase()
+  if (!user || role !== 'admin') return { error: 'Only admins can see allowances.' }
+  if (!(await isSessionValid())) return { error: 'Session expired. Please log in again.' }
+  return { user }
+}
+
+/** The week worked out from shifts and today's rates. */
+async function liveWeek(monday: string) {
+  const week = weekRange(monday)
+  const [shifts, users] = await Promise.all([
+    selectAllPages((from, to) =>
+      supabaseAdmin.from('shifts')
+        .select('id, user_id, status, start_time, created_at, odometer_start, odometer_end, total_distance')
+        // shifts started this week (older shifts without a start time go by when they were created)
+        .or(`and(start_time.gte.${week.from},start_time.lt.${week.to}),and(start_time.is.null,created_at.gte.${week.from},created_at.lt.${week.to})`)
+        .order('id', { ascending: true })
+        .range(from, to)
+    ),
+    listAllUsersCached()
+  ])
+
+  const byUser = new Map<string, any[]>()
+  for (const s of shifts as any[]) {
+    if (!s.user_id) continue
+    const list = byUser.get(s.user_id) || []
+    list.push(s)
+    byUser.set(s.user_id, list)
+  }
+
+  const rows: AllowanceRow[] = []
+  for (const u of users) {
+    const { foodRate, kmRate } = allowanceRates(u.app_metadata)
+    const mine = byUser.get(u.id) || []
+    // Show everyone who worked this week, and everyone who has an allowance rate set
+    if (mine.length === 0 && foodRate === 0 && kmRate === 0) continue
+
+    const perDay = new Map<string, AllowanceDay>()
+    for (const s of mine) {
+      const date = istDate(s.start_time || s.created_at)
+      const day = perDay.get(date) || { date, shifts: 0, km: 0, openShifts: 0 }
+      day.shifts += 1
+      const km = shiftKm(s)
+      if (km === null) day.openShifts += 1
+      else day.km = round2(day.km + km)
+      perDay.set(date, day)
+    }
+    const days = [...perDay.values()].sort((a, b) => a.date.localeCompare(b.date))
+    const daysPresent = days.length
+    const km = round2(days.reduce((t, x) => t + x.km, 0))
+    const food = round2(daysPresent * foodRate)
+    const travel = round2(km * kmRate)
+    rows.push({
+      userId: u.id,
+      name: u.user_metadata?.name || u.user_metadata?.full_name || u.email?.split('@')[0] || 'User',
+      role: u.app_metadata?.role || '',
+      daysPresent,
+      foodRate,
+      food,
+      km,
+      kmRate,
+      travel,
+      total: round2(food + travel),
+      openShifts: days.reduce((t, x) => t + x.openShifts, 0),
+      noRates: foodRate === 0 && kmRate === 0,
+      days
+    })
+  }
+  rows.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+  return { week, rows, totals: sumTotals(rows), weekEnded: today > week.sunday, users }
+}
+
+export type AllowancePaidInfo = { paidAt: string; paidByName: string; liveTotal: number; changedSincePaid: boolean }
+
+export async function fetchWeeklyAllowances(weekStart?: string): Promise<
+  | { success: true; monday: string; label: string; rows: AllowanceRow[]; totals: WeekTotals; weekEnded: boolean; paid: AllowancePaidInfo | null }
+  | { error: string }
+> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+
+  const monday = mondayOf(isYmd(weekStart) ? weekStart : new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }))
+  try {
+    const [live, paidRes] = await Promise.all([
+      liveWeek(monday),
+      supabaseAdmin.from('allowance_payouts').select('*').eq('week_start', monday).is('cancelled_at', null)
+    ])
+    // Paid-weeks table not set up yet: show the live figures (nothing can be marked paid)
+    const paidRows = paidRes.error ? [] : (paidRes.data || [])
+
+    if (paidRows.length === 0) {
+      return { success: true, monday, label: live.week.label, rows: live.rows, totals: live.totals, weekEnded: live.weekEnded, paid: null }
+    }
+
+    // Paid week: always the amounts saved when it was marked paid
+    const roles = new Map(live.users.map((u: any) => [u.id, u.app_metadata?.role || '']))
+    const rows: AllowanceRow[] = paidRows.map((p: any) => ({
+      userId: p.user_id,
+      name: p.user_name || 'User',
+      role: roles.get(p.user_id) || '',
+      daysPresent: Number(p.days_present) || 0,
+      foodRate: Number(p.food_rate) || 0,
+      food: Number(p.food_amount) || 0,
+      km: Number(p.km) || 0,
+      kmRate: Number(p.km_rate) || 0,
+      travel: Number(p.travel_amount) || 0,
+      total: Number(p.total_amount) || 0,
+      openShifts: 0,
+      noRates: !(Number(p.food_rate) > 0) && !(Number(p.km_rate) > 0),
+      days: Array.isArray(p.days) ? p.days : []
+    })).sort((a: AllowanceRow, b: AllowanceRow) => b.total - a.total || a.name.localeCompare(b.name))
+    const totals = sumTotals(rows)
+    const liveWorked = live.rows.filter(r => r.daysPresent > 0)
+    const changed = Math.abs(live.totals.total - totals.total) > 0.005 ||
+      liveWorked.length !== rows.length || liveWorked.some(r => !rows.find(x => x.userId === r.userId))
+    return {
+      success: true, monday, label: live.week.label, rows, totals, weekEnded: live.weekEnded,
+      paid: { paidAt: paidRows[0].paid_at, paidByName: paidRows[0].paid_by_name || '', liveTotal: live.totals.total, changedSincePaid: changed }
+    }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Mark a finished week as paid: saves each person's figures exactly as shown, so
+ * the week never changes afterwards. Refuses if the figures changed since they
+ * were shown (expectedTotal), if a shift that week is still running, or if the
+ * week hasn't ended yet.
+ */
+export async function markAllowanceWeekPaid(monday: string, expectedTotal: number): Promise<{ success: true; people: number; total: number } | { error: string }> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  if (!isYmd(monday) || mondayOf(monday) !== monday) return { error: 'Choose a week first.' }
+
+  try {
+    const live = await liveWeek(monday)
+    if (!live.weekEnded) return { error: 'This week has not ended yet. A week can be marked paid from the Monday after.' }
+    const running = live.rows.reduce((t, r) => t + r.openShifts, 0)
+    if (running > 0) return { error: `${running} shift${running > 1 ? 's' : ''} in this week ${running > 1 ? 'are' : 'is'} still running. End ${running > 1 ? 'them' : 'it'} first, so the km are counted.` }
+    if (Math.abs(live.totals.total - Number(expectedTotal)) > 0.005) {
+      return { error: `The figures changed since you opened this week (now ₹${live.totals.total.toLocaleString('en-IN')}). Nothing was saved. Check the new figures and try again.` }
+    }
+    const worked = live.rows.filter(r => r.daysPresent > 0)
+    if (worked.length === 0) return { error: 'Nobody worked this week, so there is nothing to mark as paid.' }
+
+    const paidByName = (auth.user.user_metadata?.name as string) || auth.user.email || null
+    // One request = all or nothing
+    const { error } = await supabaseAdmin.from('allowance_payouts').insert(worked.map(r => ({
+      week_start: monday,
+      user_id: r.userId,
+      user_name: r.name,
+      days_present: r.daysPresent,
+      food_rate: r.foodRate,
+      food_amount: r.food,
+      km: r.km,
+      km_rate: r.kmRate,
+      travel_amount: r.travel,
+      total_amount: r.total,
+      days: r.days,
+      paid_by: auth.user.id,
+      paid_by_name: paidByName
+    })))
+    if (error) {
+      if (/uq_allowance_payouts_week_user|duplicate key/.test(error.message)) return { error: 'This week is already marked as paid.' }
+      if (/allowance_payouts/.test(error.message) && /does not exist|schema cache/.test(error.message)) {
+        return { error: 'Paid weeks are not set up yet: run supabase/migrations/20261113_allowance_payouts.sql in Supabase. Nothing was saved.' }
+      }
+      return { error: error.message }
+    }
+    revalidatePath('/dashboard/sales')
+    return { success: true, people: worked.length, total: sumTotals(worked).total }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** Undo "paid" for a week marked by mistake (delete password). The saved records are kept, marked cancelled. */
+export async function undoAllowanceWeekPaid(monday: string, deletePassword: string): Promise<{ success: true } | { error: string }> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  const pwError = checkDeletePassword(deletePassword)
+  if (pwError) return { error: pwError }
+  if (!isYmd(monday) || mondayOf(monday) !== monday) return { error: 'Choose a week first.' }
+
+  const { data, error } = await supabaseAdmin.from('allowance_payouts')
+    .update({
+      cancelled_at: new Date().toISOString(),
+      cancelled_by: auth.user.id,
+      cancelled_by_name: (auth.user.user_metadata?.name as string) || auth.user.email || null
+    })
+    .eq('week_start', monday)
+    .is('cancelled_at', null)
+    .select('id')
+  if (error) return { error: error.message }
+  if (!data || data.length === 0) return { error: 'This week is not marked as paid.' }
+  revalidatePath('/dashboard/sales')
+  return { success: true }
 }

@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useTransition, useMemo, useEffect } from 'react';
-import { 
-  createRetailer, 
-  updateRetailer, 
-  createSaleRecord, 
+import {
+  createRetailer,
+  updateRetailer,
+  createSaleRecord,
   logNoOrderVisit,
   updateSaleDeliveryStatus,
   collectSalePayment,
@@ -43,9 +43,12 @@ import {
   Wallet,
   CreditCard,
   Banknote,
-  Truck
+  Truck,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { RetailerCardSkeleton, TableRowSkeleton } from '@/components/ui/Skeleton';
+import WeeklyAllowances from './WeeklyAllowances';
 
 // Hydration-safe helper to format ISO strings into readable Date and Time
 const formatDateTime = (isoString?: string) => {
@@ -93,7 +96,7 @@ export default function SalesClient({
   currentUserId?: string,
   currentUserName?: string
 }) {
-  const [activeTab, setActiveTab] = useState<'retailers' | 'sales'>('retailers');
+  const [activeTab, setActiveTab] = useState<'retailers' | 'sales' | 'allowances'>('retailers');
   const [isRetailerModalOpen, setIsRetailerModalOpen] = useState(false);
   const [isEditRetailerModalOpen, setIsEditRetailerModalOpen] = useState(false);
   const [isSalesModalOpen, setIsSalesModalOpen] = useState(false);
@@ -632,8 +635,8 @@ export default function SalesClient({
     const cashAmt = Number(sale.cash_amount) || 0;
     const onlineAmt = Number(sale.online_amount) || 0;
     const paidAmt = cashAmt + onlineAmt;
-    const dueAmt = sale.due_amount !== undefined && sale.due_amount !== null 
-      ? Number(sale.due_amount) 
+    const dueAmt = sale.due_amount !== undefined && sale.due_amount !== null
+      ? Number(sale.due_amount)
       : Math.max(0, totalAmt - paidAmt);
 
     // Default to putting the remaining due in Cash (or blank)
@@ -736,9 +739,29 @@ export default function SalesClient({
     });
   }, [records, searchTerm, selectedTerritory, salesStatusFilter]);
 
-  // Back to the first 100 whenever what's being looked at changes
-  useEffect(() => { setVisibleCount(100); }, [searchTerm, selectedTerritory, periodData?.label, activeTab, salesStatusFilter]);
-  const shownSales = filteredSales.slice(0, visibleCount);
+  // Pagination State for Orders Table & Mobile Feed
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // Reset to first page whenever search/filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedTerritory, periodData?.label, activeTab, salesStatusFilter, periodPerson, period]);
+
+  const totalOrdersCount = filteredSales.length;
+  const totalPages = Math.max(1, Math.ceil(totalOrdersCount / pageSize));
+
+  // Ensure current page does not exceed total pages when list shrinks
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const shownSales = useMemo(() => {
+    const startIdx = (currentPage - 1) * pageSize;
+    return filteredSales.slice(startIdx, startIdx + pageSize);
+  }, [filteredSales, currentPage, pageSize]);
 
   // Helper to parse product summary from sale notes
   const getSaleProductsSummary = (notes?: string) => {
@@ -779,39 +802,47 @@ export default function SalesClient({
           </div>
 
           {/* Segmented Capsule Tabs (Retailers vs Sales) */}
-          <div className="w-full grid grid-cols-2 sm:inline-flex sm:w-auto p-1 bg-white/80 backdrop-blur-md rounded-full border border-slate-200/80 shadow-xs gap-1">
+          <div className={`w-full grid ${currentUserRole === 'admin' ? 'grid-cols-3' : 'grid-cols-2'} sm:inline-flex sm:w-auto p-1 bg-white/80 backdrop-blur-md rounded-full border border-slate-200/80 shadow-xs gap-1`}>
             <button
               onClick={() => setActiveTab('retailers')}
-              className={`flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-medium transition-all ${
-                activeTab === 'retailers'
+              className={`flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-medium transition-all ${activeTab === 'retailers'
                   ? 'bg-[#0D4728] text-[#FFF9CD] font-semibold shadow-xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
-              }`}
+                }`}
             >
               <Store className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span className="truncate">Retailers</span>
-              <span className={`text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full ${
-                activeTab === 'retailers' ? 'bg-white/20 text-[#FFF9CD]' : 'bg-slate-100 text-slate-600 font-semibold'
-              }`}>
+              <span className={`text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full ${activeTab === 'retailers' ? 'bg-white/20 text-[#FFF9CD]' : 'bg-slate-100 text-slate-600 font-semibold'
+                }`}>
                 {metrics.totalRetailers}
               </span>
             </button>
             <button
               onClick={() => setActiveTab('sales')}
-              className={`flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-medium transition-all ${
-                activeTab === 'sales'
+              className={`flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-medium transition-all ${activeTab === 'sales'
                   ? 'bg-[#0D4728] text-[#FFF9CD] font-semibold shadow-xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
-              }`}
+                }`}
             >
               <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span className="truncate">Orders</span>
-              <span className={`text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full ${
-                activeTab === 'sales' ? 'bg-white/20 text-[#FFF9CD]' : 'bg-slate-100 text-slate-600 font-semibold'
-              }`}>
+              <span className={`text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full ${activeTab === 'sales' ? 'bg-white/20 text-[#FFF9CD]' : 'bg-slate-100 text-slate-600 font-semibold'
+                }`}>
                 {metrics.totalOrders}
               </span>
             </button>
+            {currentUserRole === 'admin' && (
+              <button
+                onClick={() => setActiveTab('allowances')}
+                className={`flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-medium transition-all ${activeTab === 'allowances'
+                    ? 'bg-[#0D4728] text-[#FFF9CD] font-semibold shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
+                  }`}
+              >
+                <Wallet className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <span className="truncate">Allowances</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -868,8 +899,11 @@ export default function SalesClient({
         </div>
       </div>
 
+      {/* Weekly allowance (admins only) */}
+      {currentUserRole === 'admin' && activeTab === 'allowances' && <WeeklyAllowances />}
+
       {/* 2. MAIN CARD CONTAINER (Curved Canvas) */}
-      <div className="bg-white border border-slate-200/80 rounded-[24px] sm:rounded-[28px] overflow-hidden shadow-xs flex flex-col min-h-[500px]">
+      <div className={`bg-white border border-slate-200/80 rounded-[24px] sm:rounded-[28px] overflow-hidden shadow-xs flex-col min-h-[500px] ${activeTab === 'allowances' ? 'hidden' : 'flex'}`}>
 
         {/* Search, Filter & View Mode Command Bar */}
         <div className="p-3.5 sm:p-5 border-b border-slate-100 bg-slate-50/50 space-y-3">
@@ -904,11 +938,10 @@ export default function SalesClient({
                   <button
                     type="button"
                     onClick={() => setViewMode('grid')}
-                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-xs font-semibold transition-all ${
-                      viewMode === 'grid'
+                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-xs font-semibold transition-all ${viewMode === 'grid'
                         ? 'bg-[#0D4728] text-[#FFF9CD] shadow-2xs'
                         : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                      }`}
                     title="Grid Cards View"
                   >
                     <LayoutGrid className="w-3.5 h-3.5" />
@@ -917,11 +950,10 @@ export default function SalesClient({
                   <button
                     type="button"
                     onClick={() => setViewMode('table')}
-                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-xs font-semibold transition-all ${
-                      viewMode === 'table'
+                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-xs font-semibold transition-all ${viewMode === 'table'
                         ? 'bg-[#0D4728] text-[#FFF9CD] shadow-2xs'
                         : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                      }`}
                     title="Directory Table View"
                   >
                     <List className="w-3.5 h-3.5" />
@@ -949,22 +981,20 @@ export default function SalesClient({
                 <button
                   type="button"
                   onClick={() => setSalesStatusFilter('all')}
-                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${
-                    salesStatusFilter === 'all'
+                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${salesStatusFilter === 'all'
                       ? 'bg-[#0D4728] text-[#FFF9CD] shadow-2xs'
                       : 'bg-white border border-slate-200/90 text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
-                  }`}
+                    }`}
                 >
                   All Orders ({salesRecords.length})
                 </button>
                 <button
                   type="button"
                   onClick={() => setSalesStatusFilter('pending_delivery')}
-                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 flex items-center gap-1.5 ${
-                    salesStatusFilter === 'pending_delivery'
+                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 flex items-center gap-1.5 ${salesStatusFilter === 'pending_delivery'
                       ? 'bg-amber-600 text-white shadow-2xs'
                       : 'bg-amber-50/80 border border-amber-200 text-amber-800 hover:bg-amber-100/60'
-                  }`}
+                    }`}
                 >
                   <Truck className="w-3.5 h-3.5 shrink-0" />
                   <span>Pending Delivery ({metrics.pendingDeliveries})</span>
@@ -972,11 +1002,10 @@ export default function SalesClient({
                 <button
                   type="button"
                   onClick={() => setSalesStatusFilter('pending_payment')}
-                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 flex items-center gap-1.5 ${
-                    salesStatusFilter === 'pending_payment'
+                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 flex items-center gap-1.5 ${salesStatusFilter === 'pending_payment'
                       ? 'bg-rose-600 text-white shadow-2xs'
                       : 'bg-rose-50/80 border border-rose-200 text-rose-800 hover:bg-rose-100/60'
-                  }`}
+                    }`}
                 >
                   <Wallet className="w-3.5 h-3.5 shrink-0" />
                   <span>Pending Payment ({metrics.pendingPayments})</span>
@@ -984,11 +1013,10 @@ export default function SalesClient({
                 <button
                   type="button"
                   onClick={() => setSalesStatusFilter('completed')}
-                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 flex items-center gap-1.5 ${
-                    salesStatusFilter === 'completed'
+                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 flex items-center gap-1.5 ${salesStatusFilter === 'completed'
                       ? 'bg-emerald-700 text-white shadow-2xs'
                       : 'bg-emerald-50/80 border border-emerald-200 text-emerald-800 hover:bg-emerald-100/60'
-                  }`}
+                    }`}
                 >
                   <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                   <span>Completed</span>
@@ -1005,11 +1033,10 @@ export default function SalesClient({
                 <button
                   type="button"
                   onClick={() => setSelectedTerritory('all')}
-                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${
-                    selectedTerritory === 'all'
+                  className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${selectedTerritory === 'all'
                       ? 'bg-[#0D4728] text-[#FFF9CD] shadow-2xs'
                       : 'bg-white border border-slate-200/90 text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
-                  }`}
+                    }`}
                 >
                   All ({retailers.length})
                 </button>
@@ -1020,11 +1047,10 @@ export default function SalesClient({
                       key={t}
                       type="button"
                       onClick={() => setSelectedTerritory(t)}
-                      className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${
-                        selectedTerritory === t
+                      className={`px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${selectedTerritory === t
                           ? 'bg-[#0D4728] text-[#FFF9CD] shadow-2xs'
                           : 'bg-white border border-slate-200/90 text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
-                      }`}
+                        }`}
                     >
                       {t} ({count})
                     </button>
@@ -1037,7 +1063,7 @@ export default function SalesClient({
         </div>
 
         {/* Content Canvas */}
-        <div className="p-3.5 sm:p-6 flex-1 flex flex-col">
+        <div className={`flex-1 flex flex-col ${activeTab === 'retailers' && viewMode === 'grid' ? 'p-3.5 sm:p-6' : 'p-0 sm:p-0'}`}>
 
           {/* TAB 1: RETAILERS DIRECTORY */}
           {activeTab === 'retailers' && (
@@ -1099,7 +1125,7 @@ export default function SalesClient({
                           {/* Top: Monogram Avatar, Shop Name & Territory Badge */}
                           <div className="flex items-start gap-3.5 mb-3.5">
                             {/* Brand Initials Avatar */}
-                            <div 
+                            <div
                               onClick={() => setViewingRetailer(r)}
                               className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#0D4728] to-[#1a5b36] text-[#FFF9CD] font-bold text-sm flex items-center justify-center shadow-xs shrink-0 group-hover:scale-105 transition-transform tracking-wider cursor-pointer"
                               title="Click to view full retailer details"
@@ -1109,9 +1135,9 @@ export default function SalesClient({
 
                             <div className="flex-1 min-w-0">
                               <div className="flex items-start justify-between gap-2">
-                                <h4 
+                                <h4
                                   onClick={() => setViewingRetailer(r)}
-                                  className="font-bold text-slate-900 text-base group-hover:text-[#0D4728] transition-colors leading-snug truncate cursor-pointer" 
+                                  className="font-bold text-slate-900 text-base group-hover:text-[#0D4728] transition-colors leading-snug truncate cursor-pointer"
                                   title="View full profile"
                                 >
                                   {r.shop_name}
@@ -1227,16 +1253,16 @@ export default function SalesClient({
                 </div>
               ) : (
                 /* ELEVATED RETAILERS DIRECTORY TABLE VIEW */
-                <div className="overflow-x-auto -mx-3.5 sm:-mx-6 flex-1 px-3.5 sm:px-6">
+                <div className="overflow-x-auto w-full flex-1">
                   <table className="w-full min-w-[720px] text-left border-collapse text-sm">
                     <thead>
                       <tr className="bg-slate-50/70 border-b border-slate-100 font-semibold text-slate-500 uppercase tracking-wider text-xs">
-                        <th className="py-4 px-6">Shop & Retailer</th>
-                        <th className="py-4 px-6">Territory</th>
-                        <th className="py-4 px-6">Contact & Address</th>
-                        <th className="py-4 px-6">GPS / Location</th>
-                        <th className="py-4 px-6">Registered Date & By</th>
-                        <th className="py-4 px-6 text-right">Actions</th>
+                        <th className="py-4 px-6 whitespace-nowrap">Shop & Retailer</th>
+                        <th className="py-4 px-6 whitespace-nowrap">Territory</th>
+                        <th className="py-4 px-6 whitespace-nowrap">Contact & Address</th>
+                        <th className="py-4 px-6 whitespace-nowrap">GPS / Location</th>
+                        <th className="py-4 px-6 whitespace-nowrap">Registered Date & By</th>
+                        <th className="py-4 px-6 text-right whitespace-nowrap">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1250,14 +1276,14 @@ export default function SalesClient({
                             {/* Shop Name & Owner */}
                             <td className="py-4 px-6">
                               <div className="flex items-center gap-3">
-                                <div 
+                                <div
                                   onClick={() => setViewingRetailer(r)}
                                   className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#0D4728] to-[#1a5b36] text-[#FFF9CD] font-bold text-xs flex items-center justify-center shadow-2xs shrink-0 cursor-pointer"
                                 >
                                   {initials}
                                 </div>
                                 <div>
-                                  <p 
+                                  <p
                                     onClick={() => setViewingRetailer(r)}
                                     className="font-bold text-slate-900 group-hover:text-[#0D4728] transition-colors text-sm cursor-pointer"
                                   >
@@ -1309,12 +1335,14 @@ export default function SalesClient({
                             </td>
 
                             {/* Registered At & By */}
-                            <td className="py-4 px-6">
-                              <p className="text-slate-900 font-semibold text-xs">{dt.date}</p>
-                              <p className="text-[11px] text-slate-400 font-mono flex items-center gap-1 mt-0.5">
-                                <Clock className="w-3 h-3" />
-                                {dt.time}
-                              </p>
+                            <td className="py-4 px-6 whitespace-nowrap">
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-900 font-semibold text-xs">{dt.date}</span>
+                                <span className="text-[11px] text-slate-400 font-mono flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                                  <span>{dt.time}</span>
+                                </span>
+                              </div>
                               <div className="flex items-center gap-1.5 mt-1 pt-1 border-t border-slate-100">
                                 <div className="w-5 h-5 rounded-full bg-[#0D4728]/10 text-[#0D4728] font-bold text-[9px] flex items-center justify-center shrink-0 border border-[#0D4728]/20" title={`Onboarded by ${creator.name} (${creator.role})`}>
                                   {creator.monogram}
@@ -1366,7 +1394,7 @@ export default function SalesClient({
           {activeTab === 'sales' && (
             <div className="flex-1 flex flex-col">
               {canPickPeriod ? (
-                <div className="mb-4 space-y-3">
+                <div className="p-3.5 sm:p-5 border-b border-slate-100 bg-white space-y-3">
                   <div className="flex flex-wrap items-end gap-2">
                     <label className="text-xs font-semibold text-slate-500">
                       Period
@@ -1451,11 +1479,11 @@ export default function SalesClient({
                   )}
                 </div>
               ) : (
-                <p className="mb-3 text-[11px] text-slate-400">Showing your sales from the last {SALES_DEFAULT_DAYS} days.</p>
+                <p className="px-4 sm:px-6 py-3 border-b border-slate-100 text-[11px] text-slate-400">Showing your sales from the last {SALES_DEFAULT_DAYS} days.</p>
               )}
 
               {/* MOBILE FEED (< md) */}
-              <div className="md:hidden space-y-3">
+              <div className="md:hidden p-3.5 space-y-3">
                 {isPending ? (
                   <div className="space-y-3">
                     <RetailerCardSkeleton />
@@ -1484,14 +1512,14 @@ export default function SalesClient({
                         {/* Header: Retailer + Total */}
                         <div className="flex items-start justify-between gap-2.5">
                           <div className="flex items-start gap-2.5 min-w-0">
-                            <div 
+                            <div
                               onClick={() => sale.retailers && setViewingRetailer(sale.retailers)}
                               className="w-10 h-10 rounded-xl bg-[#0D4728]/10 text-[#0D4728] font-bold text-xs flex items-center justify-center shrink-0 cursor-pointer"
                             >
                               {initials}
                             </div>
                             <div className="min-w-0">
-                              <h4 
+                              <h4
                                 onClick={() => sale.retailers && setViewingRetailer(sale.retailers)}
                                 className="font-bold text-slate-900 text-sm hover:text-[#0D4728] transition-colors truncate cursor-pointer"
                               >
@@ -1640,19 +1668,19 @@ export default function SalesClient({
               </div>
 
               {/* TABLET / DESKTOP TABLE (md and above) */}
-              <div className="hidden md:block overflow-x-auto -mx-5 sm:-mx-6 flex-1 px-5 sm:px-6">
+              <div className="hidden md:block overflow-x-auto w-full flex-1">
                 <table className="w-full min-w-[850px] text-left border-collapse text-sm">
                   <thead>
                     <tr className="bg-slate-50/70 border-b border-slate-100 font-semibold text-slate-500 uppercase tracking-wider text-xs">
-                      <th className="py-4 px-6">Date & Time</th>
-                      <th className="py-4 px-6">Retailer / Shop</th>
-                      <th className="py-4 px-6">Booked By</th>
-                      <th className="py-4 px-6">Products Booked</th>
-                      <th className="py-4 px-6">Territory</th>
-                      <th className="py-4 px-6">Order Total</th>
-                      <th className="py-4 px-6">Delivery</th>
-                      <th className="py-4 px-6">Payment Settlement</th>
-                      <th className="py-4 px-6 text-right">Actions</th>
+                      <th className="py-4 px-6 whitespace-nowrap">Date & Time</th>
+                      <th className="py-4 px-6 whitespace-nowrap">Retailer / Shop</th>
+                      <th className="py-4 px-6 whitespace-nowrap">Booked By</th>
+                      <th className="py-4 px-6 whitespace-nowrap">Products Booked</th>
+                      <th className="py-4 px-6 whitespace-nowrap">Territory</th>
+                      <th className="py-4 px-6 whitespace-nowrap">Order Total</th>
+                      <th className="py-4 px-6 whitespace-nowrap">Delivery</th>
+                      <th className="py-4 px-6 whitespace-nowrap">Payment Settlement</th>
+                      <th className="py-4 px-6 text-right whitespace-nowrap">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1682,27 +1710,27 @@ export default function SalesClient({
                         return (
                           <tr key={sale.id} className="hover:bg-slate-50/60 transition-colors group">
                             {/* Date & Time */}
-                            <td className="py-4 px-6">
-                              <p className="text-slate-900 font-bold text-sm">
-                                {dt.date}
-                              </p>
-                              <p className="text-xs text-slate-500 font-mono flex items-center gap-1.5 mt-0.5">
-                                <Clock className="w-3.5 h-3.5 text-slate-400" />
-                                {dt.time || '12:00 PM'}
-                              </p>
+                            <td className="py-4 px-6 whitespace-nowrap">
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-900 font-bold text-sm">{dt.date}</span>
+                                <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
+                                  <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                  <span>{dt.time || '12:00 PM'}</span>
+                                </span>
+                              </div>
                             </td>
 
                             {/* Retailer Info */}
                             <td className="py-4 px-6">
                               <div className="flex items-center gap-3">
-                                <div 
+                                <div
                                   onClick={() => sale.retailers && setViewingRetailer(sale.retailers)}
                                   className="w-9 h-9 rounded-xl bg-[#0D4728]/10 text-[#0D4728] font-bold text-xs flex items-center justify-center shrink-0 cursor-pointer"
                                 >
                                   {initials}
                                 </div>
                                 <div>
-                                  <p 
+                                  <p
                                     onClick={() => sale.retailers && setViewingRetailer(sale.retailers)}
                                     className="text-slate-900 font-semibold text-sm group-hover:text-[#0D4728] transition-colors cursor-pointer"
                                   >
@@ -1783,8 +1811,8 @@ export default function SalesClient({
                                 const onlineAmt = Number(sale.online_amount) || 0;
                                 const paidAmt = cashAmt + onlineAmt;
                                 const totalAmt = Number(sale.amount) || 0;
-                                const dueAmt = sale.due_amount !== undefined && sale.due_amount !== null 
-                                  ? Number(sale.due_amount) 
+                                const dueAmt = sale.due_amount !== undefined && sale.due_amount !== null
+                                  ? Number(sale.due_amount)
                                   : Math.max(0, totalAmt - paidAmt);
 
                                 if (pStatus === 'paid') {
@@ -1838,7 +1866,7 @@ export default function SalesClient({
                                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold transition-all shadow-2xs hover:shadow-xs disabled:opacity-50 whitespace-nowrap shrink-0"
                                     title="Collect payment"
                                   >
-                                    <IndianRupee className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                                    <IndianRupee className="w-3.5 h-3.5 text-emerald-700 shrink-0 inline-block" />
                                     <span>Collect</span>
                                   </button>
                                 )}
@@ -1865,19 +1893,78 @@ export default function SalesClient({
                 </table>
               </div>
 
-              {(visibleCount < filteredSales.length || periodData?.hasMore) && (
-                <div className="flex justify-center pt-4">
-                  <button
-                    type="button"
-                    disabled={periodLoading}
-                    onClick={() => {
-                      if (visibleCount < filteredSales.length) setVisibleCount(c => c + 100);
-                      else { setVisibleCount(c => c + 100); loadPeriod(period, { append: true }); }
-                    }}
-                    className="h-10 px-5 rounded-full border border-[#0D4728]/30 text-[#0D4728] text-xs sm:text-sm font-semibold bg-white hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    {periodLoading ? 'Loading…' : `Show more (${shownSales.length} of ${periodData?.hasMore ? `${filteredSales.length}+` : filteredSales.length} shown)`}
-                  </button>
+              {/* PAGINATION BAR FOR ORDERS */}
+              {!isPending && filteredSales.length > 0 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-6 py-4 border-t border-slate-100 bg-white">
+                  {/* Left: Page Size Selector & Showing Info */}
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <span className="font-medium text-slate-600">Rows per page:</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-700 outline-none focus:ring-1 focus:ring-[#0D4728] focus:border-[#0D4728]"
+                    >
+                      {[10, 20, 50, 100].map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="ml-1 text-slate-400">·</span>
+                    <span className="font-mono text-slate-600">
+                      Showing {Math.min((currentPage - 1) * pageSize + 1, totalOrdersCount)}–{Math.min(currentPage * pageSize, totalOrdersCount)} of {totalOrdersCount.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+
+                  {/* Right: Page Navigation Controls */}
+                  <div className="flex items-center gap-2">
+                    {/* Previous Button */}
+                    <button
+                      type="button"
+                      disabled={currentPage <= 1}
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold disabled:opacity-30 disabled:pointer-events-none transition-all shadow-2xs hover:shadow-xs active:scale-95"
+                      title="Previous page"
+                    >
+                      <ChevronLeft className="w-4 h-4 text-slate-600" />
+                      <span className="hidden sm:inline">Prev</span>
+                    </button>
+
+                    {/* Page Numbers / Counter */}
+                    <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200/80 text-xs font-semibold text-slate-700">
+                      <span className="font-mono text-slate-900">{currentPage}</span>
+                      <span className="text-slate-400">/</span>
+                      <span className="font-mono text-slate-500">{totalPages}</span>
+                    </div>
+
+                    {/* Next Button */}
+                    <button
+                      type="button"
+                      disabled={currentPage >= totalPages}
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold disabled:opacity-30 disabled:pointer-events-none transition-all shadow-2xs hover:shadow-xs active:scale-95"
+                      title="Next page"
+                    >
+                      <span className="hidden sm:inline">Next</span>
+                      <ChevronRight className="w-4 h-4 text-slate-600" />
+                    </button>
+
+                    {/* Load more from server if using extended period & hasMore */}
+                    {periodData?.hasMore && (
+                      <button
+                        type="button"
+                        disabled={periodLoading}
+                        onClick={() => loadPeriod(period, { append: true })}
+                        className="ml-2 px-3 py-1.5 rounded-lg border border-[#0D4728]/30 bg-[#0D4728]/5 hover:bg-[#0D4728]/10 text-[#0D4728] text-xs font-semibold transition-all disabled:opacity-50"
+                        title="Load next 100 historical orders from database"
+                      >
+                        {periodLoading ? 'Loading…' : '+ Fetch older'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -2496,8 +2583,8 @@ export default function SalesClient({
 
                 <div className="space-y-2 sm:space-y-2.5">
                   {orderItems.map((item) => (
-                    <div 
-                      key={item.id} 
+                    <div
+                      key={item.id}
                       className="p-2.5 sm:p-3 bg-slate-50/80 border border-slate-200/90 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-2.5 animate-in fade-in"
                     >
                       {/* Product Category dropdown */}
@@ -2582,22 +2669,20 @@ export default function SalesClient({
                         setSCashAmount('');
                         setSOnlineAmount('');
                       }}
-                      className={`px-3 py-1 rounded-full text-center transition-all text-xs ${
-                        !hasPaymentReceived 
-                          ? 'bg-rose-600 text-white shadow-xs' 
+                      className={`px-3 py-1 rounded-full text-center transition-all text-xs ${!hasPaymentReceived
+                          ? 'bg-rose-600 text-white shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
-                      }`}
+                        }`}
                     >
                       No (Credit)
                     </button>
                     <button
                       type="button"
                       onClick={() => setHasPaymentReceived(true)}
-                      className={`px-3 py-1 rounded-full text-center transition-all text-xs ${
-                        hasPaymentReceived 
-                          ? 'bg-[#0D4728] text-[#FFF9CD] shadow-xs' 
+                      className={`px-3 py-1 rounded-full text-center transition-all text-xs ${hasPaymentReceived
+                          ? 'bg-[#0D4728] text-[#FFF9CD] shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
-                      }`}
+                        }`}
                     >
                       Yes (Paid)
                     </button>
@@ -2690,22 +2775,20 @@ export default function SalesClient({
                     <button
                       type="button"
                       onClick={() => setIsOrderDelivered(false)}
-                      className={`px-3 py-1 rounded-full text-center transition-all text-xs ${
-                        !isOrderDelivered 
-                          ? 'bg-amber-600 text-white shadow-xs' 
+                      className={`px-3 py-1 rounded-full text-center transition-all text-xs ${!isOrderDelivered
+                          ? 'bg-amber-600 text-white shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
-                      }`}
+                        }`}
                     >
                       Pending
                     </button>
                     <button
                       type="button"
                       onClick={() => setIsOrderDelivered(true)}
-                      className={`px-3 py-1 rounded-full text-center transition-all text-xs ${
-                        isOrderDelivered 
-                          ? 'bg-[#0D4728] text-[#FFF9CD] shadow-xs' 
+                      className={`px-3 py-1 rounded-full text-center transition-all text-xs ${isOrderDelivered
+                          ? 'bg-[#0D4728] text-[#FFF9CD] shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
-                      }`}
+                        }`}
                     >
                       Delivered
                     </button>
@@ -2748,7 +2831,7 @@ export default function SalesClient({
       {isNoOrderModalOpen && noOrderRetailer && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-3 sm:p-4">
           <div className="bg-white rounded-[24px] sm:rounded-[32px] w-full max-w-lg shadow-2xl border border-white/80 overflow-hidden max-h-[92dvh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
-            
+
             {/* Header */}
             <div className="p-4 sm:p-6 border-b border-slate-100 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5 sm:gap-3">
@@ -2931,7 +3014,7 @@ export default function SalesClient({
                     {collectingPaymentSale.retailers?.territory || 'General'}
                   </span>
                 </div>
-                
+
                 {/* Financial Overview Cards */}
                 <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-200/60 text-center">
                   <div className="p-2 bg-white rounded-xl border border-slate-100">
