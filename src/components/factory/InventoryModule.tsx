@@ -20,6 +20,8 @@ interface InventoryModuleProps {
   onEditCatalogProduct: (id: string, data: Partial<CatalogProduct>) => Promise<boolean>;
   onDeleteCatalog: (id: string) => void;
   onReceivePacketStock: (productId: string, quantity: number, date: string) => Promise<boolean>;
+  /** Opens the password check to set every packet product to zero, except short / excess */
+  onZeroPacketStock?: () => void;
   isCatalogUnlocked: boolean;
   onUnlockRequest: () => void;
   onLockRequest: () => void;
@@ -43,6 +45,7 @@ export default function InventoryModule({
   onEditCatalogProduct,
   onDeleteCatalog, 
   onReceivePacketStock,
+  onZeroPacketStock,
   isCatalogUnlocked,
   onUnlockRequest,
   onLockRequest,
@@ -739,6 +742,17 @@ export default function InventoryModule({
               >
                 <Plus size={15} /> New Product Template
               </button>
+
+              {isCatalogUnlocked && onZeroPacketStock && (
+                <button
+                  onClick={onZeroPacketStock}
+                  disabled={isBusy}
+                  className="px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all bg-white text-rose-600 border border-rose-200 hover:bg-rose-50 shadow-xs disabled:opacity-50"
+                  title="Set every packet product to 0, except short / excess"
+                >
+                  <X size={15} /> Set All to Zero
+                </button>
+              )}
 
               {systemUser.role !== 'user' && (
                 <button 
@@ -1650,6 +1664,8 @@ export default function InventoryModule({
                     }
                     if (d.targetId === queryId || d.lotId === queryId || d.productId === queryId) return true;
                     if (Array.isArray(d.producedItems) && d.producedItems.some((p: any) => p.productId === queryId)) return true;
+                    // "Set All to Zero": one entry lists every product it set to 0
+                    if (Array.isArray(d.items) && d.items.some((p: any) => p?.productId === queryId)) return true;
                     if (d.lotNumber === queryName) return true;
                     if (h.desc && h.desc.includes(queryName)) return true;
                     if (h.desc && h.desc.includes(queryId)) return true;
@@ -1674,6 +1690,15 @@ export default function InventoryModule({
                         bagsUsedDisplay = (
                           <div className="mt-2 text-xs font-bold text-amber-700 bg-amber-50 inline-block px-2 py-1 rounded border border-amber-200">
                             This lot: {queryId.startsWith('l-') ? '' : `${bags} bags, `}{kg.toFixed(2)} kg
+                          </div>
+                        );
+                      }
+                    } else if (!looseLot && record.type === 'PACKET_STOCK_ZEROED' && Array.isArray(record.details?.items)) {
+                      const mine = record.details.items.find((p: any) => p?.productId === queryId);
+                      if (mine) {
+                        bagsUsedDisplay = (
+                          <div className="mt-2 text-xs font-bold text-rose-700 bg-rose-50 inline-block px-2 py-1 rounded border border-rose-200">
+                            This product: {mine.prevStock} → 0
                           </div>
                         );
                       }

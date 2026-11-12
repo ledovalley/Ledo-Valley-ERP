@@ -189,6 +189,7 @@ export default function StockTakeModule({ looseInventory, canManage, triggerToas
   const [saveState, setSaveState] = useState<Record<string, SaveState>>({});
   const draftsRef = useRef<Record<string, Draft>>({});
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const flushRef = useRef<(() => Promise<boolean>) | null>(null);
   const [newLot, setNewLot] = useState({ lotNumber: '', mark: '', grade: '', bags: '', weightPerBag: '', kg: '', note: '' });
   const [showNewLot, setShowNewLot] = useState(false);
 
@@ -228,8 +229,22 @@ export default function StockTakeModule({ looseInventory, canManage, triggerToas
 
   useEffect(() => {
     load();
-    return () => { Object.values(timersRef.current).forEach(t => clearTimeout(t)); };
+    // Leaving the Stock Take tab: send counts that are still waiting to be saved
+    // (they used to be dropped). The saves finish in the background.
+    return () => { flushRef.current?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Refresh / close / navigate away while counts are not saved yet: the browser asks first
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => {
+      if (Object.keys(timersRef.current).length || Object.keys(inflightRef.current).length) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
   }, []);
 
   const countsByLot = useMemo(() => {
@@ -307,7 +322,9 @@ export default function StockTakeModule({ looseInventory, canManage, triggerToas
     }
     const saved = res.count;
     setCounts(prev => [...prev.filter(c => c.lotId !== lotId), saved]);
-    failedRef.current.delete(lotId); setSaveState(s => ({ ...s, [lotId]: 'saved' }));
+    failedRef.current.delete(lotId);
+    // Still "saving" if a newer number was typed for this lot while this save ran
+    setSaveState(s => ({ ...s, [lotId]: timersRef.current[lotId] ? 'saving' : 'saved' }));
   };
 
   const scheduleSave = (lotId: string) => {
@@ -328,6 +345,8 @@ export default function StockTakeModule({ looseInventory, canManage, triggerToas
     await Promise.all(Object.values(inflightRef.current));
     return failedRef.current.size === 0;
   };
+  // Latest flushSaves (it needs this render's take and lots), used when leaving the tab
+  flushRef.current = flushSaves;
 
   const updateDraft = (lot: LooseLot, field: 'bags' | 'kg' | 'note', value: string) => {
     const prev = draftsRef.current[lot.id] || { bags: '', kg: '', kgTouched: false, note: '' };

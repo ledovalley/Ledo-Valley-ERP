@@ -32,6 +32,7 @@ import {
   savePacketProduct,
   deletePacketProduct,
   receivePacketStock,
+  zeroAllPacketStock,
   createFactoryBlend,
   updateFactoryBlend,
   finalizeFactoryBlend,
@@ -374,6 +375,32 @@ export default function FactoryDashboardClient({
     });
   };
 
+  /** Short / excess is never set to zero (same rule as the database). */
+  const isShortExcess = (p: CatalogProduct) => p.id === "p-variance" || /short.*excess|excess.*short/i.test(p.name || "");
+
+  const handleZeroPacketStock = () => {
+    const toZero = packetCatalog.filter(p => !isShortExcess(p) && Number(p.stock) !== 0);
+    const kept = packetCatalog.filter(isShortExcess);
+    if (toZero.length === 0) {
+      triggerToast("All packet products are already at zero.", "error");
+      return;
+    }
+    const units = toZero.reduce((t, p) => t + Number(p.stock), 0);
+    const kg = toZero.reduce((t, p) => t + Number(p.stock) * Number(p.size || 0), 0);
+    // What the person sees now: the server only goes ahead if this is still true
+    const expected = packetCatalog.map(p => ({ id: p.id, stock: Number(p.stock) }));
+    setDeleteModal({
+      title: "Set all packet stock to zero?",
+      message:
+        `${toZero.length} packet product(s) will be set to 0 (now ${Math.round(units * 1000) / 1000} units, ${kg.toFixed(2)} kg in total). ` +
+        (kept.length ? `Kept as it is: ${kept.map(p => `${p.name} (${p.stock})`).join(", ")}. ` : "") +
+        "The old stock of every product is saved in History.",
+      confirmText: "Set to zero",
+      run: password => zeroAllPacketStock(password, expected),
+      successMessage: (r: { products: number }) => `${r.products} packet product(s) set to zero. Short / excess kept.`
+    });
+  };
+
   const handleReceivePacketStock = (productId: string, quantity: number, date: string) =>
     runAction(
       () => receivePacketStock({ productId, quantity, date }),
@@ -561,6 +588,7 @@ export default function FactoryDashboardClient({
             onEditCatalogProduct={handleEditCatalogProduct}
             onDeleteCatalog={handleDeleteCatalogProduct}
             onReceivePacketStock={handleReceivePacketStock}
+            onZeroPacketStock={handleZeroPacketStock}
             isCatalogUnlocked={canManage}
             onUnlockRequest={() => triggerToast("Role-based permissions are active.")}
             onLockRequest={() => { }}

@@ -766,6 +766,45 @@ export async function receivePacketStock(data: {
   }
 }
 
+/**
+ * Sets every packet product to zero, except short / excess. Needs the delete
+ * password. Only goes ahead if each stock is still what was shown on screen
+ * (`expected`); all or nothing. The old stock of every product is kept in History.
+ */
+export async function zeroAllPacketStock(
+  deletePassword: string,
+  expected: { id: string; stock: number }[]
+): Promise<ActionResult<{ products: number; totalUnits: number; totalKg: number }>> {
+  try {
+    const pwError = checkDeletePassword(deletePassword);
+    if (pwError) return { error: pwError };
+    const { user, role, userName } = await enforceFactoryAccess();
+    if (!['admin', 'manager'].includes(role)) {
+      return { error: 'Only admins and managers can set packet stock to zero.' };
+    }
+    const list = (Array.isArray(expected) ? expected : [])
+      .filter(e => e && typeof e.id === 'string')
+      .map(e => ({ id: e.id, stock: Number(e.stock) }))
+      .filter(e => Number.isFinite(e.stock));
+
+    const { data, error } = await supabaseAdmin.rpc('fn_zero_packet_stock', {
+      p_expected: list,
+      p_user_id: user.id,
+      p_user_name: userName
+    });
+    if (error) {
+      if (/fn_zero_packet_stock/.test(error.message) && /not find|does not exist/i.test(error.message)) {
+        return { error: 'This needs a one-time database update: run 20261114_packet_stock_zero.sql in Supabase. Nothing was changed.' };
+      }
+      return { error: error.message };
+    }
+    const r = (data || {}) as { products?: number; totalUnits?: number; totalKg?: number };
+    return { success: true, products: Number(r.products) || 0, totalUnits: Number(r.totalUnits) || 0, totalKg: Number(r.totalKg) || 0 };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Loose lots
 // -----------------------------------------------------------------------------
