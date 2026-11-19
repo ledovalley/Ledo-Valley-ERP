@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Warehouse, Plus, Trash2, Edit2, Search, Filter, Shield, Lock, Unlock, Eye, EyeOff, Check, Download, PackagePlus, Clock, X, Boxes, FileText, File } from 'lucide-react';
+import { Warehouse, Plus, IndianRupee, RotateCcw, Trash2, Edit2, Search, Filter, Shield, Lock, Unlock, Eye, EyeOff, Check, Download, PackagePlus, Clock, X, Boxes, FileText, File } from 'lucide-react';
 import { LooseLot, CatalogProduct, HistoryRecord } from '@/types/factory';
-import { fetchLotUsage, type LotUsageRow, type LotReconciliation } from '@/app/factory/actions';
+import { fetchLotUsage, type LotUsageRow, type LotReconciliation, type LooseSale } from '@/app/factory/actions';
+import { todayIST } from '@/utils/allowanceWeek';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -27,6 +28,10 @@ interface InventoryModuleProps {
   onLockRequest: () => void;
   onAddCatalogProduct: (product: { name: string; unit: string; size: number; hsnCode?: string; gstRate?: number }) => Promise<boolean>;
   onLedgerAdjustment?: (targetId: string, amount: number, reason: string) => Promise<boolean>;
+  /** Sell whole bags straight from a lot (admins and managers). Resolves true when saved. */
+  onSellLoose?: (lotId: string, sale: { bags: number; date: string; buyer: string; invoiceNo: string }) => Promise<boolean>;
+  /** Opens the password check to undo a loose tea sale */
+  onCancelLooseSale?: (sale: LooseSale) => void;
   triggerToast: (msg: string, type?: 'success' | 'error') => void;
   systemUser: any;
   historyList: HistoryRecord[];
@@ -51,6 +56,8 @@ export default function InventoryModule({
   onLockRequest,
   onAddCatalogProduct,
   onLedgerAdjustment,
+  onSellLoose,
+  onCancelLooseSale,
   triggerToast,
   systemUser,
   historyList
@@ -64,6 +71,39 @@ export default function InventoryModule({
   }>({ loading: false, rows: [], reconciliation: null, error: null });
 
   const auditLotId = selectedLotForAudit?.type === 'loose' ? selectedLotForAudit.item.id : null;
+  // The lot as it is now (the panel may stay open while a sale is made or undone)
+  const auditLiveLot = auditLotId ? looseInventory.find(l => l.id === auditLotId) : undefined;
+  const auditLiveStock = auditLiveLot ? `${auditLiveLot.bags}/${auditLiveLot.weight}` : '';
+
+  // Sell loose tea (whole bags, straight from a lot)
+  const canSell = !!onSellLoose && ['admin', 'manager'].includes(systemUser?.role);
+  const [sellLotId, setSellLotId] = useState<string | null>(null);
+  const [sellForm, setSellForm] = useState({ bags: '', date: todayIST(), buyer: '', invoiceNo: '' });
+  const [isSelling, setIsSelling] = useState(false);
+  const sellLot = sellLotId ? looseInventory.find(l => l.id === sellLotId) : undefined;
+  const sellBags = parseInt(sellForm.bags, 10);
+  const sellBagsOk = !!sellLot && /^\d+$/.test(sellForm.bags.trim()) && sellBags >= 1 && sellBags <= sellLot.bags;
+  // Same rule as the database: the last bags take whatever weight is left
+  const sellKg = !sellLot || !sellBagsOk ? 0
+    : sellBags === sellLot.bags ? sellLot.weight
+    : Math.min(Number((sellBags * sellLot.weightPerBag).toFixed(3)), sellLot.weight);
+  const openSell = (lot: LooseLot) => {
+    setSellForm({ bags: '', date: todayIST(), buyer: '', invoiceNo: '' });
+    setSellLotId(lot.id);
+  };
+  const submitSell = async () => {
+    if (!sellLot || !onSellLoose || isSelling) return;
+    if (!sellBagsOk) { triggerToast(`Enter a whole number of bags, from 1 to ${sellLot.bags}.`, 'error'); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(sellForm.date)) { triggerToast('Choose the sale date.', 'error'); return; }
+    if (sellKg <= 0) { triggerToast('This lot has no weight to sell. Check its weight per bag.', 'error'); return; }
+    setIsSelling(true);
+    try {
+      const ok = await onSellLoose(sellLot.id, { bags: sellBags, date: sellForm.date, buyer: sellForm.buyer.trim(), invoiceNo: sellForm.invoiceNo.trim() });
+      if (ok) setSellLotId(null);
+    } finally {
+      setIsSelling(false);
+    }
+  };
 
   useEffect(() => {
     if (!auditLotId) return;
@@ -79,7 +119,8 @@ export default function InventoryModule({
         if (!cancelled) setLotUsage({ loading: false, rows: [], reconciliation: null, error: err instanceof Error ? err.message : 'Could not load blend usage.' });
       });
     return () => { cancelled = true; };
-  }, [auditLotId]);
+    // also reload when the lot's stock changes (a sale made or undone while the panel is open)
+  }, [auditLotId, auditLiveStock]);
   const [looseSortBy, setLooseSortBy] = useState('default');
 
   // Multi-attribute filters for Loose Tea Stock
@@ -1129,6 +1170,19 @@ export default function InventoryModule({
                                 >
                                   <Edit2 size={14} />
                                 </button>
+                                {canSell && item.bags > 0 && item.weight > 0 && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openSell(item);
+                                    }}
+                                    disabled={isBusy}
+                                    className="p-1.5 rounded-lg transition-all duration-200 bg-white text-amber-600 border border-amber-200 hover:bg-amber-50 disabled:opacity-50"
+                                    title="Sell loose tea from this lot (without blending)"
+                                  >
+                                    <IndianRupee size={14} />
+                                  </button>
+                                )}
                                 {item.weight <= 0 ? (
                                   <button 
                                     onClick={(e) => {
@@ -1261,6 +1315,63 @@ export default function InventoryModule({
           </div>
         </div>
       </div>
+
+      {sellLot && (
+        <div className="fixed inset-0 bg-[#0B172B]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-[0_24px_80px_rgba(11,23,43,0.2)]">
+            <div className="p-6 border-b border-[#0B172B]/8 bg-[#F0F5F9]/50 flex justify-between items-center">
+              <h3 className="font-bold text-[#0B172B] flex items-center gap-2"><IndianRupee size={18} className="text-amber-600" /> Sell Loose Tea</h3>
+              <button onClick={() => setSellLotId(null)} disabled={isSelling} className="text-[#0B172B]/40 hover:text-[#0B172B] bg-white p-1 rounded shadow-sm">✕</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-[#F0F5F9] rounded-xl px-4 py-3 text-sm">
+                <div className="font-bold text-[#0B172B]">{sellLot.mark} • Lot {sellLot.lotNumber} • {sellLot.grade}</div>
+                <div className="text-[#0B172B]/70 mt-0.5">In stock: <span className="font-mono font-bold">{sellLot.bags} bags / {sellLot.weight.toFixed(2)} kg</span> ({sellLot.weightPerBag} kg per bag)</div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 uppercase">Bags sold *</label>
+                  <input type="number" min="1" max={sellLot.bags} step="1" inputMode="numeric" autoFocus
+                    className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium"
+                    value={sellForm.bags} onChange={e => setSellForm({ ...sellForm, bags: e.target.value })} placeholder={`1 to ${sellLot.bags}`} />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700 uppercase">Sale date *</label>
+                  <input type="date" max={todayIST()}
+                    className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white font-medium"
+                    value={sellForm.date} onChange={e => setSellForm({ ...sellForm, date: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700 uppercase">Buyer</label>
+                  <input type="text" maxLength={200}
+                    className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium"
+                    value={sellForm.buyer} onChange={e => setSellForm({ ...sellForm, buyer: e.target.value })} placeholder="Optional" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700 uppercase">Invoice no. (billing ERP)</label>
+                  <input type="text" maxLength={100}
+                    className="w-full mt-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#009965]/30 focus:border-[#009965] outline-none text-sm text-slate-900 bg-white placeholder:text-slate-400 font-medium"
+                    value={sellForm.invoiceNo} onChange={e => setSellForm({ ...sellForm, invoiceNo: e.target.value })} placeholder="Optional" />
+                </div>
+              </div>
+              <div className="pt-1 text-sm">
+                {sellBagsOk ? (
+                  <p className="font-bold text-right">
+                    Sells <span className="text-amber-700 font-mono">{sellBags} bags / {sellKg.toFixed(2)} kg</span>
+                    <span className="text-[#0B172B]/60 font-medium"> • Left in lot: <span className="font-mono">{sellLot.bags - sellBags} bags / {(sellLot.weight - sellKg).toFixed(2)} kg</span></span>
+                  </p>
+                ) : (
+                  <p className="text-right text-[#0B172B]/50">{sellForm.bags.trim() ? `Enter a whole number from 1 to ${sellLot.bags}.` : 'Whole bags only. Stock only: billing stays in your billing ERP.'}</p>
+                )}
+              </div>
+              <div className="flex justify-end gap-3 pt-4 border-t border-[#0B172B]/8">
+                <button onClick={() => setSellLotId(null)} disabled={isSelling} className="px-5 py-2.5 rounded-xl border border-[#0B172B]/10 text-[#0B172B]/70 hover:bg-[#F0F5F9] font-bold text-sm transition-all">Cancel</button>
+                <button onClick={submitSell} disabled={isSelling || isBusy || !sellBagsOk} className="disabled:opacity-60 disabled:cursor-not-allowed px-5 py-2.5 rounded-xl bg-[#0B172B] hover:bg-[#009965] text-white font-bold text-sm transition-all shadow-md">{isSelling ? 'Saving…' : 'Record sale'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editingLotId && (
         <div className="fixed inset-0 bg-[#0B172B]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -1460,7 +1571,7 @@ export default function InventoryModule({
                   <p className="text-[10px] uppercase tracking-wider font-bold text-[#0B172B]/50 mb-1">Current Stock</p>
                   <p className="text-lg font-bold text-[#0B172B]">
                     {selectedLotForAudit.type === 'loose' 
-                      ? `${(selectedLotForAudit.item as LooseLot).weight.toFixed(2)} kg`
+                      ? `${(auditLiveLot ?? (selectedLotForAudit.item as LooseLot)).weight.toFixed(2)} kg`
                       : `${(selectedLotForAudit.item as CatalogProduct).stock} units`
                     }
                   </p>
@@ -1468,7 +1579,7 @@ export default function InventoryModule({
                 {selectedLotForAudit.type === 'loose' && (
                   <div className="bg-[#F0F5F9]/50 rounded-xl p-4 border border-[#0B172B]/5">
                     <p className="text-[10px] uppercase tracking-wider font-bold text-[#0B172B]/50 mb-1">Bags Available</p>
-                    <p className="text-lg font-bold text-[#0B172B]">{(selectedLotForAudit.item as LooseLot).bags} bags</p>
+                    <p className="text-lg font-bold text-[#0B172B]">{(auditLiveLot ?? (selectedLotForAudit.item as LooseLot)).bags} bags</p>
                   </div>
                 )}
                 <div className="bg-[#F0F5F9]/50 rounded-xl p-4 border border-[#0B172B]/5">
@@ -1558,12 +1669,15 @@ export default function InventoryModule({
 
                   {!lotUsage.loading && !lotUsage.error && lotUsage.reconciliation && (() => {
                     const rc = lotUsage.reconciliation;
-                    const current = (selectedLotForAudit.item as LooseLot).weight;
+                    const current = (auditLiveLot ?? (selectedLotForAudit.item as LooseLot)).weight;
+                    const soldKg = rc.soldKg || 0;
+                    const sales = rc.sales || [];
+                    const activeSales = sales.filter(x => !x.cancelledAt);
                     const fmt = (n: number) => `${n < 0 ? '-' : ''}${Math.abs(n).toFixed(2)} kg`;
                     const signed = (n: number) => `${n >= 0 ? '+' : '-'} ${Math.abs(n).toFixed(2)} kg`;
                     // With a receipt record we can check the books; without one we work the opening figure out.
-                    const opening = rc.receivedKg ?? (current + rc.usedKg - rc.correctionsKg - rc.returnsKg);
-                    const expected = opening + rc.correctionsKg + rc.returnsKg - rc.usedKg;
+                    const opening = rc.receivedKg ?? (current + rc.usedKg + soldKg - rc.correctionsKg - rc.returnsKg);
+                    const expected = opening + rc.correctionsKg + rc.returnsKg - rc.usedKg - soldKg;
                     const unexplained = rc.receivedKg === null ? 0 : current - expected;
                     const balanced = Math.abs(unexplained) < 0.005;
 
@@ -1595,6 +1709,12 @@ export default function InventoryModule({
                             <span className="text-[#0B172B]/70 font-sans">Used in blends</span>
                             <span className="font-semibold text-[#0B172B]">{signed(-rc.usedKg)}</span>
                           </div>
+                          {sales.length > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-[#0B172B]/70 font-sans">Sold loose ({activeSales.length} sale{activeSales.length === 1 ? '' : 's'}, {activeSales.reduce((t, x) => t + x.bags, 0)} bags)</span>
+                              <span className="font-semibold text-amber-700">{signed(-soldKg)}</span>
+                            </div>
+                          )}
                           <div className="flex justify-between border-t border-[#0B172B]/10 pt-1.5">
                             <span className="text-[#0B172B] font-sans font-bold">Expected stock</span>
                             <span className="font-bold text-[#0B172B]">{fmt(expected)}</span>
@@ -1613,6 +1733,40 @@ export default function InventoryModule({
                             )
                           )}
                         </div>
+
+                        {sales.length > 0 && (
+                          <div className="border-t border-[#0B172B]/8 px-4 py-3 space-y-2">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-[#0B172B]/50">Loose tea sold</div>
+                            {sales.map(sale => (
+                              <div key={sale.id} className={`flex justify-between items-start gap-3 text-xs ${sale.cancelledAt ? 'opacity-60' : ''}`}>
+                                <div className="min-w-0">
+                                  <div className={`text-[#0B172B] ${sale.cancelledAt ? 'line-through' : ''}`}>
+                                    {sale.saleDate}: {sale.bags} bag{sale.bags === 1 ? '' : 's'} / {sale.weight.toFixed(2)} kg
+                                    {sale.buyer ? ` to ${sale.buyer}` : ''}{sale.invoiceNo ? ` • Invoice ${sale.invoiceNo}` : ''}
+                                  </div>
+                                  <div className="text-[#0B172B]/45 mt-0.5">
+                                    Entered {new Date(sale.createdAt).toLocaleString()}{sale.createdByName ? ` • ${sale.createdByName}` : ''}
+                                    {sale.cancelledAt ? ` • Cancelled ${new Date(sale.cancelledAt).toLocaleString()}${sale.cancelledByName ? ` by ${sale.cancelledByName}` : ''}, stock put back` : ''}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {!sale.cancelledAt && <span className="font-mono font-bold text-amber-700">{signed(-sale.weight)}</span>}
+                                  {!sale.cancelledAt && canSell && onCancelLooseSale && (
+                                    <button
+                                      onClick={() => onCancelLooseSale(sale)}
+                                      disabled={isBusy}
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-rose-200 text-rose-600 bg-white hover:bg-rose-50 font-bold font-sans disabled:opacity-50"
+                                      title="Cancel this sale and put the stock back (needs the delete password)"
+                                    >
+                                      <RotateCcw size={12} /> Undo
+                                    </button>
+                                  )}
+                                  {sale.cancelledAt && <span className="font-sans font-bold text-[#0B172B]/50">Cancelled</span>}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                         {rc.corrections.length > 0 && (
                           <div className="border-t border-[#0B172B]/8 px-4 py-3 space-y-2">

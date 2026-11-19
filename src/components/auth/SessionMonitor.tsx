@@ -45,7 +45,7 @@ export default function SessionMonitor() {
       setIsExpiring(true);
 
       try {
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: 'local' });
       } catch (e) {
         console.error('Error during automatic sign out:', e);
       }

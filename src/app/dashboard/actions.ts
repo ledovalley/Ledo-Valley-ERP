@@ -15,7 +15,7 @@ export async function signOut() {
   cookieStore.delete(SESSION_EXPIRES_COOKIE)
   cookieStore.delete(SESSION_START_COOKIE)
   const supabase = await createClient()
-  await supabase.auth.signOut()
+  await supabase.auth.signOut({ scope: 'local' })
   return redirect('/login')
 }
 
@@ -538,14 +538,19 @@ export async function fetchExactTerritoryDistribution(): Promise<TerritoryDistri
       if (ownOnly) shiftsQuery = shiftsQuery.eq('user_id', user!.id)
       return shiftsQuery.range(from, to)
     })
-    const retailers = await selectAllPages((from, to) => {
+    // Retailers removed by an admin are left out (works before the is_active column exists too)
+    const readRetailers = (cols: string) => selectAllPages((from, to) => {
       let retailersQuery = supabaseAdmin
         .from('retailers')
-        .select('id, territory')
+        .select(cols)
         .order('id', { ascending: true })
       if (ownOnly) retailersQuery = retailersQuery.eq('sales_person_id', user!.id)
       return retailersQuery.range(from, to)
     })
+    let retailers: any[]
+    try { retailers = await readRetailers('id, territory, is_active') }
+    catch { retailers = await readRetailers('id, territory') }
+    retailers = retailers.filter(r => r.is_active !== false)
 
     const map = new Map<string, { revenue: number; orders: number; count: number }>()
 
@@ -970,6 +975,13 @@ function getTodayISTBounds() {
 
 export async function fetchDailyOperationalTargets(): Promise<DailyOperationalTargets> {
   try {
+    // Only logged-in people may read the targets (this reads with the server key)
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return { min_shift_hours: 6, target_visits: 5, target_orders: 3, target_distance_km: 15 }
+    }
+
     const { data } = await supabaseAdmin
       .from('daily_operational_targets')
       .select('*')

@@ -29,7 +29,7 @@ export default function SessionCountdown({ lastSignInAt }: { lastSignInAt: strin
       setTimeLeft('Logging out...');
       try {
         const supabase = createClient();
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: 'local' });
       } catch {}
       // Clear session cookie
       document.cookie = `${SESSION_EXPIRES_COOKIE}=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT`;

@@ -33,12 +33,17 @@ import {
   deletePacketProduct,
   receivePacketStock,
   zeroAllPacketStock,
+  sellLooseTea,
+  cancelLooseSale,
+  type LooseSale,
   createFactoryBlend,
   updateFactoryBlend,
   finalizeFactoryBlend,
   deleteFactoryBlend,
   mergeFactoryBlends
 } from "./actions";
+import { todayBatchCode } from '@/utils/batchCode';
+import { todayIST } from '@/utils/allowanceWeek';
 
 const SYSTEM_LOT_IDS = ["l-balance", "l-orthodox", "l-cardamom", "l-cardamom-husk"];
 
@@ -281,6 +286,31 @@ export default function FactoryDashboardClient({
     });
   };
 
+  const handleSellLoose = (lotId: string, sale: { bags: number; date: string; buyer: string; invoiceNo: string }) => {
+    // What the person sees now: the server only goes ahead if the lot is still the same
+    const lot = looseInventory.find(l => l.id === lotId);
+    if (!lot) return Promise.resolve(false);
+    return runAction(
+      () => sellLooseTea({ lotId, ...sale, seen: { bags: lot.bags, weight: lot.weight } }),
+      (r: { bags: number; weight: number; lotBags: number; lotWeight: number }) =>
+        `Sold ${r.bags} bags / ${r.weight.toFixed(2)} kg of lot ${lot.lotNumber}. Left: ${r.lotBags} bags / ${r.lotWeight.toFixed(2)} kg.`
+    ).then(r => !!r);
+  };
+
+  const handleCancelLooseSale = (sale: LooseSale) => {
+    setDeleteModal({
+      title: "Undo this loose tea sale?",
+      message:
+        `${sale.bags} bags / ${sale.weight.toFixed(2)} kg will be put back into lot ${sale.lotNumber} (${sale.mark}). ` +
+        `Sale of ${sale.saleDate}${sale.buyer ? ` to ${sale.buyer}` : ""}${sale.invoiceNo ? `, invoice ${sale.invoiceNo}` : ""}. ` +
+        "The sale stays in History, marked as cancelled.",
+      confirmText: "Undo sale",
+      run: password => cancelLooseSale(sale.id, password),
+      successMessage: (r: { bags: number; lotBags: number; lotWeight: number }) =>
+        `Sale cancelled. ${r.bags} bags put back: lot now ${r.lotBags} bags / ${r.lotWeight.toFixed(2)} kg.`
+    });
+  };
+
   const handlePurgeNilLooseStock = () => {
     // Same rule as the server: a lot is empty only when it has no weight left
     const nilLots = looseInventory.filter(item => !SYSTEM_LOT_IDS.includes(item.id) && Number(item.weight) <= 0);
@@ -473,8 +503,9 @@ export default function FactoryDashboardClient({
     handleSubmitBlend({
       editingBlendId: null,
       blendName: blend.blendName,
-      batchNo: blend.batchNo,
-      date: new Date().toISOString().split("T")[0],
+      // A duplicate is a new blend made today: today's batch code and date (not the original's)
+      batchNo: todayBatchCode(),
+      date: todayIST(),
       lots: blend.lotsUsed
     }).then(saved => !!saved);
 
@@ -589,6 +620,8 @@ export default function FactoryDashboardClient({
             onDeleteCatalog={handleDeleteCatalogProduct}
             onReceivePacketStock={handleReceivePacketStock}
             onZeroPacketStock={handleZeroPacketStock}
+            onSellLoose={canManage ? handleSellLoose : undefined}
+            onCancelLooseSale={canManage ? handleCancelLooseSale : undefined}
             isCatalogUnlocked={canManage}
             onUnlockRequest={() => triggerToast("Role-based permissions are active.")}
             onLockRequest={() => { }}

@@ -212,6 +212,11 @@ export async function fetchEligibleEmployees(): Promise<EligibleEmployee[]> {
 
 export async function fetchTargetsForMonth(month: string): Promise<EmployeeTarget[]> {
   try {
+    // Only admins and managers may read targets (this reads with the server key)
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user || !['admin', 'manager'].includes(user.app_metadata?.role)) return []
+
     const { data, error } = await supabaseAdmin
       .from('employee_targets')
       .select('*')

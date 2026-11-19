@@ -16,11 +16,16 @@ export const BACKUP_TABLES = [
   'factory_serial_log',
   'factory_stock_takes',
   'factory_stock_take_counts',
+  'factory_loose_sales',  // loose tea sold directly from lots
   // sales & ERP
   'products',
   'retailers',
   'shifts',
   'sales_records',
+  'sales_payments',     // every payment collected on an order
+  'sales_cancelled',    // cancelled orders, with the full original order
+  'allowance_payouts',  // weeks marked as paid, with the amounts paid
+  'allowance_corrections', // admin corrections to a person's allowance days/km (kept, never deleted)
   'retailer_visits',
   'employee_targets',
   'daily_operational_targets',

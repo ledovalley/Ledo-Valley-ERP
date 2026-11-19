@@ -891,7 +891,7 @@ export default function LedgerClient({
                 const totalBikeClaim = Math.round(metrics.totalKmDriven * bikeRate);
                 return (
                   <span className="text-[#0D4728] font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/60 font-mono text-[11px]">
-                    ₹{totalBikeClaim.toLocaleString('en-IN')} claim (@₹{bikeRate}/km)
+                    ₹{totalBikeClaim.toLocaleString('en-IN')} from recorded km (@₹{bikeRate}/km)
                   </span>
                 );
               }

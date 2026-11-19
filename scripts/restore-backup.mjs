@@ -32,8 +32,8 @@ const onlyTables = (args.find(a => a.startsWith('--tables=')) || '').replace('--
 // Parents before children, so links between tables resolve
 const ORDER = [
   'factory_loose_lots', 'factory_packet_catalog', 'factory_blends', 'factory_blend_lots_used',
-  'factory_history', 'factory_serial_counter', 'factory_serial_log', 'factory_stock_takes', 'factory_stock_take_counts',
-  'products', 'retailers', 'shifts', 'sales_records', 'retailer_visits',
+  'factory_history', 'factory_serial_counter', 'factory_serial_log', 'factory_stock_takes', 'factory_stock_take_counts', 'factory_loose_sales',
+  'products', 'retailers', 'shifts', 'sales_records', 'sales_payments', 'sales_cancelled', 'allowance_payouts', 'allowance_corrections', 'retailer_visits',
   'employee_targets', 'daily_operational_targets', 'logs', 'log_archives'
 ]
 
@@ -87,7 +87,8 @@ const supabase = createClient(url, key, { auth: { persistSession: false } })
 let failed = false
 
 // Permanent records (the database refuses changes to existing rows): add missing rows only
-const APPEND_ONLY = { factory_history: 'id', factory_serial_log: 'serial_no' }
+// (paid allowance weeks and loose tea sales are also permanent: a record already there is left as it is)
+const APPEND_ONLY = { factory_history: 'id', factory_serial_log: 'serial_no', allowance_payouts: 'id', allowance_corrections: 'id', factory_loose_sales: 'id', sales_cancelled: 'id' }
 
 for (const t of tables) {
   let rows = backup.tables[t]

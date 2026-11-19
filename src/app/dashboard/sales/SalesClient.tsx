@@ -14,6 +14,7 @@ import {
 import { SALES_DEFAULT_DAYS, SALES_PERIOD_OPTIONS, type SalesPeriodKey } from '@/utils/salesPeriods';
 import {
   Store,
+  BarChart3,
   Plus,
   Search,
   MapPin,
@@ -49,6 +50,8 @@ import {
 } from 'lucide-react';
 import { RetailerCardSkeleton, TableRowSkeleton } from '@/components/ui/Skeleton';
 import WeeklyAllowances from './WeeklyAllowances';
+import RetailerInsights from './RetailerInsights';
+import { CancelSaleDialog, DeleteRetailerDialog, SalesAdminRecords } from './SalesAdminTools';
 
 // Hydration-safe helper to format ISO strings into readable Date and Time
 const formatDateTime = (isoString?: string) => {
@@ -96,11 +99,16 @@ export default function SalesClient({
   currentUserId?: string,
   currentUserName?: string
 }) {
-  const [activeTab, setActiveTab] = useState<'retailers' | 'sales' | 'allowances'>('retailers');
+  const [activeTab, setActiveTab] = useState<'retailers' | 'sales' | 'allowances' | 'insights'>('retailers');
   const [isRetailerModalOpen, setIsRetailerModalOpen] = useState(false);
   const [isEditRetailerModalOpen, setIsEditRetailerModalOpen] = useState(false);
   const [isSalesModalOpen, setIsSalesModalOpen] = useState(false);
   const [viewingRetailer, setViewingRetailer] = useState<any | null>(null);
+  // Admin only: cancel a sale / delete a retailer (asks for the delete password)
+  const isAdmin = currentUserRole === 'admin';
+  const [cancelSaleTarget, setCancelSaleTarget] = useState<any | null>(null);
+  const [deleteRetailerTarget, setDeleteRetailerTarget] = useState<any | null>(null);
+  const [adminRefresh, setAdminRefresh] = useState(0);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState('');
 
@@ -810,7 +818,7 @@ export default function SalesClient({
           </div>
 
           {/* Segmented Capsule Tabs (Retailers vs Sales) */}
-          <div className={`w-full grid ${currentUserRole === 'admin' ? 'grid-cols-3' : 'grid-cols-2'} sm:inline-flex sm:w-auto p-1 bg-white/80 backdrop-blur-md rounded-full border border-slate-200/80 shadow-xs gap-1`}>
+          <div className={`w-full grid ${currentUserRole === 'admin' ? 'grid-cols-4' : 'grid-cols-2'} sm:inline-flex sm:w-auto p-1 bg-white/80 backdrop-blur-md rounded-full border border-slate-200/80 shadow-xs gap-1`}>
             <button
               onClick={() => setActiveTab('retailers')}
               className={`flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-medium transition-all ${activeTab === 'retailers'
@@ -849,6 +857,18 @@ export default function SalesClient({
               >
                 <Wallet className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                 <span className="truncate">Allowances</span>
+              </button>
+            )}
+            {currentUserRole === 'admin' && (
+              <button
+                onClick={() => setActiveTab('insights')}
+                className={`flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-medium transition-all ${activeTab === 'insights'
+                    ? 'bg-[#0D4728] text-[#FFF9CD] font-semibold shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
+                  }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <span className="truncate">Insights</span>
               </button>
             )}
           </div>
@@ -909,9 +929,10 @@ export default function SalesClient({
 
       {/* Weekly allowance (admins only) */}
       {currentUserRole === 'admin' && activeTab === 'allowances' && <WeeklyAllowances />}
+      {currentUserRole === 'admin' && activeTab === 'insights' && <RetailerInsights />}
 
       {/* 2. MAIN CARD CONTAINER (Curved Canvas) */}
-      <div className={`bg-white border border-slate-200/80 rounded-[24px] sm:rounded-[28px] overflow-hidden shadow-xs flex-col min-h-[500px] ${activeTab === 'allowances' ? 'hidden' : 'flex'}`}>
+      <div className={`bg-white border border-slate-200/80 rounded-[24px] sm:rounded-[28px] overflow-hidden shadow-xs flex-col min-h-[500px] ${activeTab === 'allowances' || activeTab === 'insights' ? 'hidden' : 'flex'}`}>
 
         {/* Search, Filter & View Mode Command Bar */}
         <div className="p-3.5 sm:p-5 border-b border-slate-100 bg-slate-50/50 space-y-3">
@@ -1625,7 +1646,7 @@ export default function SalesClient({
                           </div>
 
                           {/* Quick Action Buttons for Field Reps on Mobile */}
-                          {((sale.delivery_status || 'delivered') === 'pending' || (sale.payment_status || 'credit') !== 'paid' || sale.retailers) && (
+                          {((sale.delivery_status || 'delivered') === 'pending' || (sale.payment_status || 'credit') !== 'paid' || sale.retailers || isAdmin) && (
                             <div className="flex items-center justify-end gap-1.5 pt-1.5 border-t border-slate-100">
                               {/* Mark Delivered Action */}
                               {(sale.delivery_status || 'delivered') === 'pending' && (
@@ -1652,6 +1673,20 @@ export default function SalesClient({
                                 >
                                   <IndianRupee className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
                                   <span>Collect</span>
+                                </button>
+                              )}
+
+                              {/* Admin: cancel this order */}
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  disabled={isPending}
+                                  onClick={() => setCancelSaleTarget(sale)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-bold transition-all active:scale-95 disabled:opacity-50"
+                                  title="Cancel this order (admin)"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Cancel</span>
                                 </button>
                               )}
 
@@ -1876,6 +1911,20 @@ export default function SalesClient({
                                   >
                                     <IndianRupee className="w-3.5 h-3.5 text-emerald-700 shrink-0 inline-block" />
                                     <span>Collect</span>
+                                  </button>
+                                )}
+
+                                {/* Admin: cancel this order */}
+                                {isAdmin && (
+                                  <button
+                                    type="button"
+                                    disabled={isPending}
+                                    onClick={() => setCancelSaleTarget(sale)}
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all disabled:opacity-50"
+                                    title="Cancel this order (admin)"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>Cancel</span>
                                   </button>
                                 )}
 
@@ -2305,6 +2354,21 @@ export default function SalesClient({
                   <Edit2 className="w-3.5 h-3.5" />
                   <span>Edit Details</span>
                 </button>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const r = viewingRetailer;
+                      setViewingRetailer(null);
+                      setDeleteRetailerTarget(r);
+                    }}
+                    className="flex items-center justify-center gap-1.5 px-3.5 py-2 sm:py-2.5 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold transition-all border border-rose-200 order-4 sm:order-1"
+                    title="Delete this retailer (admin)"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete</span>
+                  </button>
+                )}
 
                 <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 order-1 sm:order-2">
                   <button
@@ -3157,6 +3221,30 @@ export default function SalesClient({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Admin only: records of cancelled orders and removed retailers */}
+      {isAdmin && activeTab !== 'allowances' && activeTab !== 'insights' && (
+        <SalesAdminRecords refreshKey={adminRefresh} onChanged={() => setAdminRefresh(n => n + 1)} />
+      )}
+      {isAdmin && cancelSaleTarget && (
+        <CancelSaleDialog
+          sale={cancelSaleTarget}
+          salesPersonName={getUserInfo(cancelSaleTarget.sales_person_id).name}
+          onClose={() => setCancelSaleTarget(null)}
+          onDone={() => {
+            setAdminRefresh(n => n + 1);
+            // the chosen period is loaded separately from the page, so load it again
+            if (periodData) loadPeriod(period);
+          }}
+        />
+      )}
+      {isAdmin && deleteRetailerTarget && (
+        <DeleteRetailerDialog
+          retailer={deleteRetailerTarget}
+          onClose={() => setDeleteRetailerTarget(null)}
+          onDone={() => setAdminRefresh(n => n + 1)}
+        />
       )}
 
     </div>

@@ -78,6 +78,7 @@ export default function UsersClient({
   type AllowanceEntry = { id: string; rate: string | number };
   const [selectedAllowances, setSelectedAllowances] = useState<AllowanceEntry[]>([]);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -215,6 +216,14 @@ export default function UsersClient({
         setError(res.error);
       } else {
         setIsModalOpen(false);
+        const r = res as { passwordChanged?: boolean; signedOut?: boolean; warning?: string } | undefined;
+        if (r?.passwordChanged) {
+          setNotice(r.warning
+            ? { ok: false, text: r.warning }
+            : { ok: true, text: `Password changed for ${email}. They have been signed out of all devices and must log in again with the new password.` });
+        } else {
+          setNotice(null);
+        }
       }
     });
   };
@@ -254,6 +263,13 @@ export default function UsersClient({
         onConfirm={confirmDeleteUser}
         onClose={() => setPendingDeleteId(null)}
       />
+
+      {notice && (
+        <div className={`flex items-start justify-between gap-3 p-3.5 rounded-2xl border text-sm ${notice.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
+          <span>{notice.text}</span>
+          <button type="button" onClick={() => setNotice(null)} className="shrink-0 text-xs font-semibold underline">Dismiss</button>
+        </div>
+      )}
 
       {/* 1. HERO HEADER & SUMMARY METRICS (Consistent with Dashboard) */}
       <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-6 pb-2">
@@ -606,6 +622,7 @@ export default function UsersClient({
                         onChange={(e) => setPassword(e.target.value)}
                         className="w-full bg-slate-50/70 border border-slate-200 rounded-full py-2.5 pl-11 pr-4 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0D4728]/20 focus:border-[#0D4728] transition-all"
                         placeholder="••••••••••••"
+                        autoComplete="new-password"
                         required={!editingId}
                       />
                     </div>
@@ -794,7 +811,7 @@ export default function UsersClient({
                                     <input
                                       type="number"
                                       min="0"
-                                      step={entry.id === 'bike_allowance' ? '0.5' : '1'}
+                                      step="0.01"
                                       placeholder={entry.id === 'bike_allowance' ? 'Rate per km (e.g. 3)' : 'Enter rate (e.g. 250)'}
                                       value={entry.rate}
                                       onChange={(e) => updateAllowanceRate(entry.id, e.target.value)}

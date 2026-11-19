@@ -54,7 +54,7 @@ export async function updateSession(request: NextRequest) {
   // If session is expired, sign out and clear cookies
   if (user && isSessionExpired) {
     try {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
     } catch {}
 
     if (pathname.startsWith('/dashboard') || pathname.startsWith('/factory') || pathname.startsWith('/portal') || pathname.startsWith('/api')) {

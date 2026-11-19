@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Wallet, Bike, Utensils, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
-  Download, Loader2, AlertTriangle, Users, Info, CheckCircle2, RotateCcw
+  Download, Loader2, AlertTriangle, Users, Info, CheckCircle2, RotateCcw, Pencil
 } from 'lucide-react';
 import { fetchWeeklyAllowances, fetchWeeklyAllowanceReport, fetchAllowanceMonthReport, markAllowanceWeekPaid, undoAllowanceWeekPaid, type AllowanceRow, type AllowancePaidInfo } from './actions';
 import { buildAllowanceWorkbook, saveXlsx } from './allowanceReport';
+import AllowanceEditDialog from './AllowanceEditDialog';
 import { addDays, dayLabel, mondayOf, todayIST } from '@/utils/allowanceWeek';
 
 type WeekData = {
@@ -19,7 +20,7 @@ type WeekData = {
 };
 
 const inr = (n: number) =>
-  `₹${n.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 })}`;
+  `${n < 0 ? '-' : ''}₹${Math.abs(n).toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 })}`;
 const kmText = (n: number) => `${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })} km`;
 
 /**
@@ -37,6 +38,7 @@ export default function WeeklyAllowances() {
   const [open, setOpen] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [editTarget, setEditTarget] = useState<{ userId: string; name: string } | null>(null);
   const requestRef = useRef(0);
 
   useEffect(() => {
@@ -56,7 +58,8 @@ export default function WeeklyAllowances() {
   const isThisWeek = monday === thisMonday;
   const shown = data && data.monday === monday ? data : null;
   const openShifts = shown ? shown.rows.reduce((t, r) => t + r.openShifts, 0) : 0;
-  const worked = shown ? shown.rows.filter(r => r.daysPresent > 0).length : 0;
+  // anyone with days present, or with a one-off extra amount to pay
+  const worked = shown ? shown.rows.filter(r => r.daysPresent > 0 || r.extra !== 0).length : 0;
 
   const markPaid = async () => {
     if (!shown || saving) return;
@@ -120,7 +123,8 @@ export default function WeeklyAllowances() {
           ...r,
           days: r.days.map(d => ({ date: d.date, shifts: d.shifts, km: d.km, foodRate: r.foodRate, kmRate: r.kmRate, food: r.foodRate, travel: d.km * r.kmRate }))
         })),
-        shifts: rep.shifts
+        shifts: rep.shifts,
+        corrections: rep.corrections
       });
       saveXlsx(bytes, `Weekly_Allowance_${rep.monday}.xlsx`);
     } catch (err) {
@@ -148,7 +152,8 @@ export default function WeeklyAllowances() {
         people: rep.people,
         shifts: rep.shifts,
         weeks: rep.weeks,
-        showPaidColumn: true
+        showPaidColumn: true,
+        corrections: rep.corrections
       });
       saveXlsx(bytes, `Monthly_Allowance_${rep.month}.xlsx`);
     } catch (err) {
@@ -300,7 +305,7 @@ export default function WeeklyAllowances() {
             </div>
             <div className="rounded-2xl bg-white border border-slate-200 p-4">
               <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-slate-500"><Users className="w-3.5 h-3.5" /> People</div>
-              <div className="text-lg sm:text-xl font-semibold font-mono text-slate-900 mt-1">{shown.rows.filter(r => r.daysPresent > 0).length}</div>
+              <div className="text-lg sm:text-xl font-semibold font-mono text-slate-900 mt-1">{shown.rows.filter(r => r.daysPresent > 0 || r.extra !== 0).length}</div>
               <div className="text-[11px] text-slate-500">worked this week</div>
             </div>
           </div>
@@ -320,7 +325,7 @@ export default function WeeklyAllowances() {
           ) : (
             <div className="border border-slate-200 rounded-2xl overflow-hidden">
               {/* Header (wide screens) */}
-              <div className="hidden md:grid grid-cols-[1.6fr_0.7fr_1fr_0.9fr_1fr_1fr_28px] gap-3 px-4 py-2.5 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+              <div className="hidden md:grid grid-cols-[1.6fr_0.7fr_1fr_0.9fr_1fr_1fr_72px_28px] gap-3 px-4 py-2.5 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
                 <span>Person</span>
                 <span className="text-right">Days</span>
                 <span className="text-right">Food</span>
@@ -328,18 +333,24 @@ export default function WeeklyAllowances() {
                 <span className="text-right">Travel</span>
                 <span className="text-right">Total</span>
                 <span />
+                <span />
               </div>
               {shown.rows.map(r => {
                 const isOpen = open === r.userId;
                 return (
                   <div key={r.userId} className="border-t border-slate-100 first:border-t-0">
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setOpen(isOpen ? null : r.userId)}
-                      className="w-full text-left px-4 py-3 hover:bg-slate-50/70 grid grid-cols-2 md:grid-cols-[1.6fr_0.7fr_1fr_0.9fr_1fr_1fr_28px] gap-x-3 gap-y-1 items-center"
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(isOpen ? null : r.userId); } }}
+                      className="w-full text-left px-4 py-3 hover:bg-slate-50/70 cursor-pointer grid grid-cols-2 md:grid-cols-[1.6fr_0.7fr_1fr_0.9fr_1fr_1fr_72px_28px] gap-x-3 gap-y-1 items-center"
                     >
                       <span className="col-span-2 md:col-span-1 min-w-0">
-                        <span className="block text-sm font-semibold text-slate-900 truncate">{r.name}</span>
+                        <span className="block text-sm font-semibold text-slate-900 truncate">
+                          {r.name}
+                          {r.edited && <span className="ml-1.5 align-middle px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-semibold">Edited</span>}
+                        </span>
                         <span className="block text-[11px] text-slate-500 capitalize">
                           {r.role || 'staff'}
                           {r.noRates && <span className="ml-1.5 text-amber-700 normal-case">· no allowance rates set</span>}
@@ -356,8 +367,19 @@ export default function WeeklyAllowances() {
                         <span className="block text-[10px] text-slate-400">{r.kmRate > 0 ? `${r.km} × ${inr(r.kmRate)}` : 'no rate'}</span>
                       </span>
                       <span className="text-sm md:text-right font-semibold font-mono text-[#0D4728]"><span className="md:hidden text-slate-400 font-sans font-normal">Total: </span>{inr(r.total)}</span>
+                      <span className="col-span-2 md:col-span-1 md:flex md:justify-end">
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); if (!shown.paid) setEditTarget({ userId: r.userId, name: r.name }); }}
+                          disabled={!!shown.paid}
+                          title={shown.paid ? 'This week is paid. Press "Undo paid" first to correct it.' : `Correct ${r.name}'s days and km for this week`}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <Pencil className="w-3.5 h-3.5" /> Edit
+                        </button>
+                      </span>
                       <span className="hidden md:flex justify-end text-slate-400">{isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}</span>
-                    </button>
+                    </div>
                     {isOpen && (
                       <div className="px-4 pb-4">
                         {r.days.length === 0 ? (
@@ -370,9 +392,16 @@ export default function WeeklyAllowances() {
                                 <span className="text-slate-500">
                                   {d.shifts} shift{d.shifts > 1 ? 's' : ''} · {kmText(d.km)}
                                   {d.openShifts > 0 && <span className="text-amber-700"> · {d.openShifts} still running</span>}
+                                  {d.edited && <span className="text-amber-700"> · edited</span>}
                                 </span>
                               </div>
                             ))}
+                            {r.extra !== 0 && (
+                              <div className="flex items-center justify-between px-3 py-2 text-xs text-slate-700">
+                                <span className="font-medium">Other adjustment</span>
+                                <span className="text-slate-500">{inr(r.extra)}</span>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -381,14 +410,15 @@ export default function WeeklyAllowances() {
                 );
               })}
               {/* Grand total */}
-              <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 grid grid-cols-2 md:grid-cols-[1.6fr_0.7fr_1fr_0.9fr_1fr_1fr_28px] gap-x-3 items-center text-sm font-semibold text-slate-900">
+              <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 grid grid-cols-2 md:grid-cols-[1.6fr_0.7fr_1fr_0.9fr_1fr_1fr_72px_28px] gap-x-3 items-center text-sm font-semibold text-slate-900">
                 <span className="col-span-2 md:col-span-1">Total</span>
                 <span className="md:text-right"><span className="md:hidden text-slate-400 font-normal">Days: </span>{shown.totals.days}</span>
                 <span className="md:text-right"><span className="md:hidden text-slate-400 font-normal">Food: </span>{inr(shown.totals.food)}</span>
                 <span className="md:text-right"><span className="md:hidden text-slate-400 font-normal">Km: </span>{kmText(shown.totals.km)}</span>
                 <span className="md:text-right"><span className="md:hidden text-slate-400 font-normal">Travel: </span>{inr(shown.totals.travel)}</span>
                 <span className="md:text-right font-mono text-[#0D4728]"><span className="md:hidden text-slate-400 font-sans font-normal">Total: </span>{inr(shown.totals.total)}</span>
-                <span />
+                <span className="hidden md:block" />
+                <span className="hidden md:block" />
               </div>
             </div>
           )}
@@ -406,6 +436,16 @@ export default function WeeklyAllowances() {
         <div className="flex-1 flex items-center justify-center p-12 text-sm text-slate-400 gap-2">
           <Loader2 className="w-4 h-4 animate-spin" /> Working out the week…
         </div>
+      )}
+
+      {editTarget && shown && (
+        <AllowanceEditDialog
+          monday={shown.monday}
+          userId={editTarget.userId}
+          name={editTarget.name}
+          onClose={() => setEditTarget(null)}
+          onSaved={() => { setEditTarget(null); setReloadKey(k => k + 1); }}
+        />
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient, getCachedUser } from '@/utils/supabase/server';
+import { todayIST } from '@/utils/allowanceWeek';
 import { supabaseAdmin } from '@/utils/supabase/admin';
 import type { BlendProcess, LooseLot, CatalogProduct } from '@/types/factory';
 import { selectAllPages } from '@/utils/selectAll';
@@ -57,7 +58,7 @@ function required(value: unknown, label: string): string {
 
 function isoDate(value: unknown): string {
   const s = String(value ?? '').trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : new Date().toISOString().split('T')[0];
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : todayIST();
 }
 
 function newId(prefix: string) {
@@ -329,6 +330,25 @@ export type LotReconciliation = {
   correctionsKg: number;
   returnsKg: number;
   usedKg: number;
+  /** Loose tea sold directly from this lot (cancelled sales are listed but not counted) */
+  sales: LooseSale[];
+  soldKg: number;
+};
+
+export type LooseSale = {
+  id: string;
+  lotId: string;
+  lotNumber: string;
+  mark: string;
+  bags: number;
+  weight: number;
+  saleDate: string;
+  buyer: string;
+  invoiceNo: string;
+  createdAt: string;
+  createdByName: string;
+  cancelledAt: string | null;
+  cancelledByName: string;
 };
 
 // -----------------------------------------------------------------------------
@@ -542,6 +562,10 @@ export async function fetchLotUsage(
     const usedKg = rows.reduce((sum, r) => sum + r.weightUsed, 0);
     const correctionsKg = corrections.reduce((sum, c) => sum + c.deltaKg, 0);
 
+    // Loose tea sold directly from this lot (empty until 20261116_loose_sales.sql is run)
+    const sales = await loadLooseSales(lotId);
+    const soldKg = sales.filter(x => !x.cancelledAt).reduce((sum, x) => sum + x.weight, 0);
+
     return {
       rows,
       reconciliation: {
@@ -550,7 +574,9 @@ export async function fetchLotUsage(
         corrections,
         correctionsKg: Number(correctionsKg.toFixed(3)),
         returnsKg: Number(returnsKg.toFixed(3)),
-        usedKg: Number(usedKg.toFixed(3))
+        usedKg: Number(usedKg.toFixed(3)),
+        sales,
+        soldKg: Number(soldKg.toFixed(3))
       }
     };
   } catch (err) {
@@ -1552,6 +1578,143 @@ export async function cancelStockTake(takeId: string, deletePassword: string): P
       details: { stockTakeId: takeId }
     });
     return { success: true };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Loose tea sold directly from a lot, without blending (20261116_loose_sales.sql).
+// Stock only: billing is done in the separate billing ERP.
+// -----------------------------------------------------------------------------
+const LOOSE_SALES_SQL = 'This needs a one-time database update: run 20261116_loose_sales.sql in Supabase. Nothing was changed.';
+const missingLooseSales = (message: string) =>
+  /factory_loose_sales|fn_sell_loose_tea|fn_cancel_loose_sale/.test(message) && /not find|does not exist|schema cache/i.test(message);
+
+function toLooseSale(r: any): LooseSale {
+  return {
+    id: r.id,
+    lotId: r.lot_id,
+    lotNumber: r.lot_number || '',
+    mark: r.mark || '',
+    bags: Number(r.bags) || 0,
+    weight: Number(r.weight) || 0,
+    saleDate: r.sale_date,
+    buyer: r.buyer || '',
+    invoiceNo: r.invoice_no || '',
+    createdAt: r.created_at,
+    createdByName: r.created_by_name || '',
+    cancelledAt: r.cancelled_at || null,
+    cancelledByName: r.cancelled_by_name || ''
+  };
+}
+
+/** Sales of one lot, newest first. Empty if the table isn't there yet. */
+async function loadLooseSales(lotId: string): Promise<LooseSale[]> {
+  const { data, error } = await supabaseAdmin
+    .from('factory_loose_sales')
+    .select('*')
+    .eq('lot_id', lotId)
+    .order('created_at', { ascending: false })
+    .limit(1000);
+  if (error) {
+    if (!missingLooseSales(error.message)) console.error('Loose sales read failed:', error.message);
+    return [];
+  }
+  return (data || []).map(toLooseSale);
+}
+
+/**
+ * Sell whole bags of loose tea straight from a lot. Admins and managers only.
+ * `seen` is the lot's stock as shown on screen: the sale only goes ahead if it
+ * is still the same. Stock change, sale record and History are one database step.
+ */
+export async function sellLooseTea(input: {
+  lotId: string;
+  bags: number;
+  date: string;
+  buyer?: string;
+  invoiceNo?: string;
+  seen: { bags: number; weight: number };
+}): Promise<ActionResult<{ saleId: string; bags: number; weight: number; lotBags: number; lotWeight: number }>> {
+  try {
+    const { user, role, userName } = await enforceFactoryAccess();
+    if (!['admin', 'manager'].includes(role)) {
+      return { error: 'Only admins and managers can sell loose tea.' };
+    }
+    const lotId = required(input.lotId, 'Lot');
+    if (SYSTEM_LOT_IDS.includes(lotId) || lotId.startsWith('l-')) {
+      return { error: 'System ledgers cannot be sold from here.' };
+    }
+    const bags = toNumber(input.bags);
+    if (!Number.isInteger(bags) || bags <= 0) {
+      return { error: 'Bags sold must be a whole number, 1 or more.' };
+    }
+    const date = isoDate(input.date);
+    const seenBags = toNumber(input.seen?.bags);
+    const seenWeight = toNumber(input.seen?.weight);
+    if (!Number.isFinite(seenBags) || !Number.isFinite(seenWeight)) {
+      return { error: 'Refresh the page and try again.' };
+    }
+
+    const { data, error } = await supabaseAdmin.rpc('fn_sell_loose_tea', {
+      p_lot_id: lotId,
+      p_bags: bags,
+      p_expected_bags: seenBags,
+      p_expected_weight: seenWeight,
+      p_sale_date: date,
+      p_buyer: String(input.buyer || '').trim().slice(0, 200),
+      p_invoice_no: String(input.invoiceNo || '').trim().slice(0, 100),
+      p_user_id: user.id,
+      p_user_name: userName
+    });
+    if (error) return { error: missingLooseSales(error.message) ? LOOSE_SALES_SQL : error.message };
+    const r = (data || {}) as any;
+    return {
+      success: true,
+      saleId: String(r.saleId),
+      bags: Number(r.bags) || 0,
+      weight: Number(r.weight) || 0,
+      lotBags: Number(r.lotBags) || 0,
+      lotWeight: Number(r.lotWeight) || 0
+    };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/**
+ * Undo a loose tea sale: puts the bags and kg back into the lot. Needs the
+ * delete password. Admins and managers only. The sale stays on record as cancelled.
+ */
+export async function cancelLooseSale(
+  saleId: string,
+  deletePassword: string
+): Promise<ActionResult<{ bags: number; weight: number; lotBags: number; lotWeight: number }>> {
+  try {
+    const pwError = checkDeletePassword(deletePassword);
+    if (pwError) return { error: pwError };
+    const { user, role, userName } = await enforceFactoryAccess();
+    if (!['admin', 'manager'].includes(role)) {
+      return { error: 'Only admins and managers can undo a loose tea sale.' };
+    }
+    const id = required(saleId, 'Sale');
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return { error: 'Sale not found.' };
+
+    const { data, error } = await supabaseAdmin.rpc('fn_cancel_loose_sale', {
+      p_sale_id: id,
+      p_user_id: user.id,
+      p_user_name: userName
+    });
+    if (error) return { error: missingLooseSales(error.message) ? LOOSE_SALES_SQL : error.message };
+    const r = (data || {}) as any;
+    return {
+      success: true,
+      bags: Number(r.bags) || 0,
+      weight: Number(r.weight) || 0,
+      lotBags: Number(r.lotBags) || 0,
+      lotWeight: Number(r.lotWeight) || 0
+    };
   } catch (err) {
     return fail(err);
   }

@@ -22,6 +22,22 @@ export const instant = false;
  * sales there are). Falls back to adding up the sales here if the database
  * function hasn't been installed yet (20261104_sales_summary.sql).
  */
+// Retailers an admin has removed are not counted. If the is_active column does not exist yet
+// (20261117_sale_cancel_retailer_delete.sql not run), count them all instead of showing 0.
+async function countRetailers(salesPersonId: string | null): Promise<number> {
+  const base = () => {
+    let q = supabaseAdmin.from('retailers').select('id', { count: 'exact', head: true })
+    if (salesPersonId) q = q.eq('sales_person_id', salesPersonId)
+    return q
+  }
+  try {
+    const res: any = await base().or('is_active.is.null,is_active.eq.true')
+    if (!res.error) return res.count || 0
+    const plain: any = await base()
+    return plain.count || 0
+  } catch { return 0 }
+}
+
 async function salesTotals(salesPersonId: string | null): Promise<{ count: number; rev: number }> {
   const { data, error } = await supabaseAdmin.rpc('fn_sales_summary', { p_from: null, p_to: null, p_sales_person: salesPersonId });
   if (!error) {
@@ -67,7 +83,7 @@ export default async function DashboardPage() {
     isManagement
       ? Promise.all([
           listAllUsersCached().then(users => users.length).catch(() => 0),
-          Promise.resolve(supabaseAdmin.from('retailers').select('id', { count: 'exact', head: true })).then(res => res.count || 0).catch(() => 0),
+          countRetailers(null),
           salesTotals(null)
         ] as const)
       : Promise.resolve([0, 0, { count: 0, rev: 0 }] as const),
@@ -76,7 +92,7 @@ export default async function DashboardPage() {
     !isManagement && user?.id
       ? Promise.all([
           Promise.resolve(supabaseAdmin.from('retailer_visits').select('id', { count: 'exact', head: true }).eq('sales_person_id', user.id)).then(res => res.count || 0).catch(() => 0),
-          Promise.resolve(supabaseAdmin.from('retailers').select('id', { count: 'exact', head: true }).eq('sales_person_id', user.id)).then(res => res.count || 0).catch(() => 0),
+          countRetailers(user.id),
           salesTotals(user.id)
         ] as const)
       : Promise.resolve([0, 0, { count: 0, rev: 0 }] as const),

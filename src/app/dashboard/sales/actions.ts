@@ -7,8 +7,9 @@ import { selectAllPages } from '@/utils/selectAll'
 import { supabaseAdmin } from '@/utils/supabase/admin'
 import { SALES_DEFAULT_DAYS, salesPeriodRange, type SalesPeriodKey } from '@/utils/salesPeriods'
 import { listAllUsersCached } from '@/utils/usersList'
-import { weekRange, istDate, isYmd, mondayOf, addDays } from '@/utils/allowanceWeek'
+import { weekRange, istDate, isYmd, mondayOf, addDays, todayIST } from '@/utils/allowanceWeek'
 import { checkDeletePassword } from '@/utils/deletePassword'
+import { phoneKey } from '@/utils/phoneMatch'
 
 // Retailer Actions
 export async function fetchRetailers() {
@@ -19,12 +20,15 @@ export async function fetchRetailers() {
   // Admins & managers see all, other staff see only theirs
   const ownOnly = role !== 'admin' && role !== 'manager'
   try {
-    return await selectAllPages((from, to) => {
+    const all = await selectAllPages((from, to) => {
       let query = supabase.from('retailers').select('*')
         .order('created_at', { ascending: false }).order('id', { ascending: true })
       if (ownOnly) query = query.eq('sales_person_id', user?.id)
       return query.range(from, to)
     })
+    // Retailers removed by an admin are hidden (checked here, so this also works
+    // before 20261117_sale_cancel_retailer_delete.sql adds the column)
+    return (all as any[]).filter(r => r.is_active !== false)
   } catch (error) {
     console.error("Fetch Retailers Error:", error)
     return []
@@ -44,6 +48,26 @@ export async function createRetailer(formData: FormData) {
   const phone = formData.get('phone') as string
   const territory = formData.get('territory') as string
   const geo_location = formData.get('geo_location') as string
+
+  // Refuse a retailer whose phone number already belongs to another (not removed)
+  // retailer. Looked up with the server key so it also sees retailers added by other
+  // sales people, who cannot see each other's lists.
+  const key = phoneKey(phone)
+  if (key) {
+    try {
+      const all = await selectAllPages((from, to) =>
+        supabaseAdmin.from('retailers').select('*')
+          .order('id', { ascending: true }).range(from, to))
+      const dup = (all as any[]).find(r => r.is_active !== false && phoneKey(r.phone) === key)
+      if (dup) {
+        const label = [dup.shop_name, dup.name].filter(Boolean).join(' - ')
+        return { error: `This phone number already belongs to an existing retailer: ${label || 'unnamed'}${dup.territory ? ` (${dup.territory})` : ''}. Use that retailer instead of adding a new one.` }
+      }
+    } catch (e) {
+      // If the check itself cannot run, do not stop the sales person from working.
+      console.error('Duplicate retailer check failed:', e)
+    }
+  }
 
   // Server locks current date & time automatically
   const currentTimestamp = new Date().toISOString()
@@ -267,12 +291,13 @@ export async function createSaleRecord(formData: FormData) {
   const payment_status = (formData.get('payment_status') as string) || 'credit'
   const cash_amount = parseFloat(formData.get('cash_amount') as string) || 0
   const online_amount = parseFloat(formData.get('online_amount') as string) || 0
-  const due_amount = parseFloat(formData.get('due_amount') as string) || (amount - cash_amount - online_amount)
+  const clientDue = parseFloat(formData.get('due_amount') as string)
   const delivery_status = (formData.get('delivery_status') as string) || 'delivered'
 
-  // Automatically stamp current date & time
+  // Automatically stamp current date & time. The order's date is the India date
+  // (an order at 2 am IST belongs to that day, not the day before).
   const now = new Date()
-  const datePart = now.toISOString().split('T')[0]
+  const datePart = istDate(now.toISOString())
   const createdAt = now.toISOString()
   const deliveredAt = delivery_status === 'delivered' ? createdAt : null
 
@@ -284,6 +309,34 @@ export async function createSaleRecord(formData: FormData) {
   if (!retailer_id) return { error: 'Please select a retailer.' }
   if ([amount, cash_amount, online_amount].some(n => !Number.isFinite(n) || n < 0)) {
     return { error: 'Amounts cannot be negative.' }
+  }
+
+  // The payment split must add up. The saved due is always worked out here from the amounts.
+  if (!['paid', 'partial', 'credit'].includes(payment_status)) return { error: 'Invalid payment status.' }
+  if (!['delivered', 'pending'].includes(delivery_status)) return { error: 'Invalid delivery status.' }
+  const paidNow = cash_amount + online_amount
+  if (paidNow > amount + 1) {
+    return { error: `Cash and online together (₹${paidNow.toLocaleString('en-IN')}) cannot be more than the order amount (₹${amount.toLocaleString('en-IN')}).` }
+  }
+  const due_amount = Math.round(Math.max(0, amount - paidNow) * 100) / 100
+  if (Number.isFinite(clientDue) && Math.abs(clientDue - due_amount) > 1) {
+    return { error: 'The cash, online and due amounts do not add up to the order amount. Please check them and try again.' }
+  }
+
+  const removed = await retailerRemovedError(retailer_id)
+  if (removed) return { error: removed }
+
+  // Same order saved twice (double tap, or a retry after a slow connection): refuse the
+  // second one if this sales person already saved an identical order a moment ago.
+  {
+    const since = new Date(now.getTime() - 60_000).toISOString()
+    let q = supabase.from('sales_records').select('id').eq('retailer_id', retailer_id)
+      .eq('sales_person_id', user.id).eq('amount', amount).gte('created_at', since).limit(1)
+    if (notes) q = q.eq('notes', notes)
+    const { data: recent } = await q
+    if (recent && recent.length > 0) {
+      return { error: 'This same order was already saved a moment ago, so it was not saved again. Check the orders list.' }
+    }
   }
 
   // Check if sales rep has an active shift
@@ -387,6 +440,9 @@ export async function logNoOrderVisit(formData: FormData) {
   const geo_location = formData.get('geo_location') as string
 
   if (!retailer_id) return { error: 'Please select a retailer.' }
+
+  const removed = await retailerRemovedError(retailer_id)
+  if (removed) return { error: removed }
 
   // Check if rep has active shift
   const { data: activeShift } = await supabase
@@ -541,7 +597,7 @@ export async function fetchRetailerVisits(limit = 50) {
 // Rates are the ones set for each user on the Users page. A week marked as paid
 // always shows the amounts saved at that moment (allowance_payouts).
 // -----------------------------------------------------------------------------
-export type AllowanceDay = { date: string; shifts: number; km: number; openShifts: number }
+export type AllowanceDay = { date: string; shifts: number; km: number; openShifts: number; edited?: boolean }
 export type AllowanceRow = {
   userId: string
   name: string
@@ -555,6 +611,10 @@ export type AllowanceRow = {
   total: number
   openShifts: number
   noRates: boolean
+  /** One-off extra amount (+ or -) added by an admin correction; included in total */
+  extra: number
+  /** An admin corrected something in this person's week */
+  edited: boolean
   days: AllowanceDay[]
 }
 
@@ -588,6 +648,86 @@ function sumTotals(rows: AllowanceRow[]): WeekTotals {
   }), { food: 0, travel: 0, total: 0, km: 0, days: 0 })
 }
 
+type CorrRow = any
+
+const missingCorrTable = (message: string) =>
+  /allowance_corrections|fn_save_allowance_correction|fn_allowance_corr_token/.test(message) && /does not exist|schema cache|not find/i.test(message)
+const CORR_SQL = 'Allowance corrections are not set up yet: run supabase/migrations/20261118_allowance_corrections.sql in Supabase. Nothing was changed.'
+
+/**
+ * The live (not retired) corrections for weeks between two Mondays. If the table
+ * isn't set up yet there are none; any other read problem stops the report, because
+ * showing amounts without the corrections would be wrong.
+ */
+async function loadCorrections(fromMonday: string, toMonday: string): Promise<CorrRow[]> {
+  try {
+    return await selectAllPages((a, b) =>
+      supabaseAdmin.from('allowance_corrections').select('*')
+        .gte('week_start', fromMonday).lte('week_start', toMonday).is('cancelled_at', null)
+        .order('id', { ascending: true }).range(a, b)
+    ) as CorrRow[]
+  } catch (err) {
+    if (missingCorrTable(err instanceof Error ? err.message : String(err))) return []
+    throw err
+  }
+}
+
+const ymd = (v: any) => String(v || '').slice(0, 10)
+
+/** Put a person's live corrections on top of the days worked out from shifts. */
+function applyCorrections(perDay: Map<string, AllowanceDay>, corrs: CorrRow[]) {
+  let extra = 0
+  let edited = false
+  for (const c of corrs) {
+    edited = true
+    if (c.day_date) {
+      const date = ymd(c.day_date)
+      if (!c.present) { perDay.delete(date); continue }
+      const old = perDay.get(date)
+      perDay.set(date, { date, shifts: old?.shifts ?? 0, km: round2(Number(c.km) || 0), openShifts: old?.openShifts ?? 0, edited: true })
+    } else {
+      extra = round2(extra + (Number(c.extra_amount) || 0))
+    }
+  }
+  return { extra, edited }
+}
+
+/** One saved correction, as shown in the Corrections sheet of the Excel reports. */
+export type CorrectionRecord = {
+  id: string; weekStart: string; userId: string; userName: string
+  date: string | null            // null = the one-off extra amount
+  present: boolean | null; km: number | null
+  origPresent: boolean | null; origShifts: number | null; origKm: number | null
+  extra: number | null
+  reason: string; createdAt: string; createdByName: string
+  cancelledAt: string | null; cancelledByName: string; cancelledReason: string
+}
+
+/** Every correction (also retired ones) for weeks between two Mondays, oldest first. Read-only. */
+async function loadCorrectionHistory(fromMonday: string, toMonday: string): Promise<CorrectionRecord[]> {
+  let rows: CorrRow[] = []
+  try {
+    rows = await selectAllPages((a, b) =>
+      supabaseAdmin.from('allowance_corrections').select('*')
+        .gte('week_start', fromMonday).lte('week_start', toMonday)
+        .order('created_at', { ascending: true }).order('id', { ascending: true }).range(a, b)
+    ) as CorrRow[]
+  } catch (err) {
+    if (missingCorrTable(err instanceof Error ? err.message : String(err))) return []
+    throw err
+  }
+  const num = (v: any) => (v === null || v === undefined ? null : Number(v))
+  return rows.map(c => ({
+    id: c.id, weekStart: ymd(c.week_start), userId: c.user_id, userName: c.user_name || '',
+    date: c.day_date ? ymd(c.day_date) : null,
+    present: c.present ?? null, km: num(c.km),
+    origPresent: c.orig_present ?? null, origShifts: num(c.orig_shifts), origKm: num(c.orig_km),
+    extra: num(c.extra_amount),
+    reason: c.reason || '', createdAt: c.created_at, createdByName: c.created_by_name || '',
+    cancelledAt: c.cancelled_at || null, cancelledByName: c.cancelled_by_name || '', cancelledReason: c.cancelled_reason || ''
+  }))
+}
+
 async function requireAdmin(): Promise<{ user: any } | { error: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -604,7 +744,7 @@ const SHIFT_REPORT_COLUMNS = SHIFT_COLUMNS + ', end_time, vehicle_type, start_lo
 
 async function liveWeek(monday: string, detailed = false) {
   const week = weekRange(monday)
-  const [shifts, users] = await Promise.all([
+  const [shifts, users, corrections] = await Promise.all([
     selectAllPages((from, to) =>
       supabaseAdmin.from('shifts')
         .select(detailed ? SHIFT_REPORT_COLUMNS : SHIFT_COLUMNS)
@@ -613,7 +753,8 @@ async function liveWeek(monday: string, detailed = false) {
         .order('id', { ascending: true })
         .range(from, to)
     ),
-    listAllUsersCached()
+    listAllUsersCached(),
+    loadCorrections(monday, monday)
   ])
 
   const byUser = new Map<string, any[]>()
@@ -623,13 +764,22 @@ async function liveWeek(monday: string, detailed = false) {
     list.push(s)
     byUser.set(s.user_id, list)
   }
+  const corrByUser = new Map<string, CorrRow[]>()
+  for (const c of corrections) {
+    const l = corrByUser.get(c.user_id) || []
+    l.push(c)
+    corrByUser.set(c.user_id, l)
+  }
+  /** What the shifts say, before any correction (used by the edit window) */
+  const origByUser = new Map<string, AllowanceDay[]>()
 
   const rows: AllowanceRow[] = []
   for (const u of users) {
     const { foodRate, kmRate } = allowanceRates(u.app_metadata)
     const mine = byUser.get(u.id) || []
-    // Show everyone who worked this week, and everyone who has an allowance rate set
-    if (mine.length === 0 && foodRate === 0 && kmRate === 0) continue
+    const myCorr = corrByUser.get(u.id) || []
+    // Show everyone who worked this week, and everyone who has an allowance rate set (or a correction)
+    if (mine.length === 0 && foodRate === 0 && kmRate === 0 && myCorr.length === 0) continue
 
     const perDay = new Map<string, AllowanceDay>()
     for (const s of mine) {
@@ -641,6 +791,8 @@ async function liveWeek(monday: string, detailed = false) {
       else day.km = round2(day.km + km)
       perDay.set(date, day)
     }
+    origByUser.set(u.id, [...perDay.values()].map(d => ({ ...d })).sort((a, b) => a.date.localeCompare(b.date)))
+    const { extra, edited } = applyCorrections(perDay, myCorr)
     const days = [...perDay.values()].sort((a, b) => a.date.localeCompare(b.date))
     const daysPresent = days.length
     const km = round2(days.reduce((t, x) => t + x.km, 0))
@@ -656,7 +808,9 @@ async function liveWeek(monday: string, detailed = false) {
       km,
       kmRate,
       travel,
-      total: round2(food + travel),
+      extra,
+      edited,
+      total: round2(food + travel + extra),
       openShifts: days.reduce((t, x) => t + x.openShifts, 0),
       noRates: foodRate === 0 && kmRate === 0,
       days
@@ -664,7 +818,7 @@ async function liveWeek(monday: string, detailed = false) {
   }
   rows.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
-  return { week, rows, totals: sumTotals(rows), weekEnded: today > week.sunday, users, byUser }
+  return { week, rows, totals: sumTotals(rows), weekEnded: today > week.sunday, users, byUser, origByUser }
 }
 
 export type AllowancePaidInfo = { paidAt: string; paidByName: string; liveTotal: number; changedSincePaid: boolean }
@@ -710,8 +864,11 @@ async function weekView(weekStart?: string, detailed = false): Promise<{ view: W
       total: Number(p.total_amount) || 0,
       openShifts: 0,
       noRates: !(Number(p.food_rate) > 0) && !(Number(p.km_rate) > 0),
+      // a one-off extra is saved inside the total: extra = total - food - travel
+      extra: round2((Number(p.total_amount) || 0) - (Number(p.food_amount) || 0) - (Number(p.travel_amount) || 0)),
+      edited: false,
       days: Array.isArray(p.days) ? p.days : []
-    })).sort((a: AllowanceRow, b: AllowanceRow) => b.total - a.total || a.name.localeCompare(b.name))
+    })).map((r: AllowanceRow) => ({ ...r, edited: r.extra !== 0 || r.days.some(d => d && d.edited) })).sort((a: AllowanceRow, b: AllowanceRow) => b.total - a.total || a.name.localeCompare(b.name))
     const totals = sumTotals(rows)
     const liveWorked = live.rows.filter(r => r.daysPresent > 0)
     const changed = Math.abs(live.totals.total - totals.total) > 0.005 ||
@@ -748,7 +905,7 @@ export type AllowanceShift = {
 
 /** Everything for the detailed Excel report: the week as shown, plus every shift per person. Read-only. */
 export async function fetchWeeklyAllowanceReport(weekStart?: string): Promise<
-  (WeekView & { shifts: Record<string, AllowanceShift[]> }) | { error: string }
+  (WeekView & { shifts: Record<string, AllowanceShift[]>; corrections: CorrectionRecord[] }) | { error: string }
 > {
   const auth = await requireAdmin()
   if ('error' in auth) return { error: auth.error }
@@ -779,7 +936,8 @@ export async function fetchWeeklyAllowanceReport(weekStart?: string): Promise<
         }))
         .sort((a: AllowanceShift, b: AllowanceShift) => String(a.start).localeCompare(String(b.start)))
     }
-    return { ...view, shifts }
+    const corrections = await loadCorrectionHistory(view.monday, view.monday)
+    return { ...view, shifts, corrections }
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
   }
@@ -804,8 +962,10 @@ export async function markAllowanceWeekPaid(monday: string, expectedTotal: numbe
     if (Math.abs(live.totals.total - Number(expectedTotal)) > 0.005) {
       return { error: `The figures changed since you opened this week (now ₹${live.totals.total.toLocaleString('en-IN')}). Nothing was saved. Check the new figures and try again.` }
     }
-    const worked = live.rows.filter(r => r.daysPresent > 0)
+    // anyone with days present, or with a one-off extra amount to pay
+    const worked = live.rows.filter(r => r.daysPresent > 0 || r.extra !== 0)
     if (worked.length === 0) return { error: 'Nobody worked this week, so there is nothing to mark as paid.' }
+    if (worked.some(r => r.total < 0)) return { error: 'A correction makes someone\'s total negative. Open their Edit window and fix it first. Nothing was saved.' }
 
     const paidByName = (auth.user.user_metadata?.name as string) || auth.user.email || null
     // One request = all or nothing
@@ -830,6 +990,16 @@ export async function markAllowanceWeekPaid(monday: string, expectedTotal: numbe
         return { error: 'Paid weeks are not set up yet: run supabase/migrations/20261113_allowance_payouts.sql in Supabase. Nothing was saved.' }
       }
       return { error: error.message }
+    }
+    // Once saved, corrections for this week are refused by the database. If one was saved
+    // between reading the figures and saving them, the saved amounts would be missing it:
+    // check, and if so take the paid marks back (they are kept, marked cancelled).
+    const after = await liveWeek(monday)
+    if (Math.abs(after.totals.total - live.totals.total) > 0.005) {
+      await supabaseAdmin.from('allowance_payouts')
+        .update({ cancelled_at: new Date().toISOString(), cancelled_by: auth.user.id, cancelled_by_name: 'Automatic: figures changed while saving' })
+        .eq('week_start', monday).is('cancelled_at', null)
+      return { error: 'The figures changed while saving, so the week was NOT marked as paid. Check the new figures and try again.' }
     }
     revalidatePath('/dashboard/sales')
     return { success: true, people: worked.length, total: sumTotals(worked).total }
@@ -862,6 +1032,150 @@ export async function undoAllowanceWeekPaid(monday: string, deletePassword: stri
 }
 
 // -----------------------------------------------------------------------------
+// Admin: correct one person's week, day by day (20261118_allowance_corrections.sql)
+//
+// The shifts are never changed. A correction (present / absent, km, one-off extra)
+// sits on top of them. A paid week can't be corrected (Undo paid first). Every
+// save is kept with who, when and why; nothing is deleted.
+// -----------------------------------------------------------------------------
+export type EditDay = {
+  date: string
+  origShifts: number; origPresent: boolean; origKm: number; openShifts: number   // what the shifts say
+  present: boolean; km: number; edited: boolean                                  // as it stands now
+}
+export type AllowanceEditData = {
+  success: true
+  monday: string; label: string; userId: string; name: string
+  foodRate: number; kmRate: number
+  days: EditDay[]
+  extra: number
+  token: string          // version of this person's week; must be sent back when saving
+  today: string
+  history: CorrectionRecord[]
+}
+
+const isUuid = (v: any) => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
+
+async function paidFor(monday: string, userId: string) {
+  const { data, error } = await supabaseAdmin.from('allowance_payouts').select('id')
+    .eq('week_start', monday).eq('user_id', userId).is('cancelled_at', null).limit(1)
+  if (error) throw new Error(error.message)
+  return (data || []).length > 0
+}
+
+async function corrToken(monday: string, userId: string): Promise<string> {
+  const { data, error } = await supabaseAdmin.rpc('fn_allowance_corr_token', { p_week: monday, p_user: userId })
+  if (error) throw new Error(error.message)
+  return String(data ?? '')
+}
+
+export async function fetchAllowanceEditData(monday: string, userId: string): Promise<AllowanceEditData | { error: string }> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  if (!isYmd(monday) || mondayOf(monday) !== monday || !isUuid(userId)) return { error: 'Choose a person and a week first.' }
+  try {
+    if (await paidFor(monday, userId)) return { error: 'This week is marked as paid. Press "Undo paid" first, then correct it and mark it paid again.' }
+    // The version is read BEFORE the figures: if someone saves in between, our save is refused, never the other way round.
+    const token = await corrToken(monday, userId)
+    const live = await liveWeek(monday)
+    const user = live.users.find((u: any) => u.id === userId)
+    const row = live.rows.find(r => r.userId === userId)
+    if (!user || !row) return { error: 'This person was not found.' }
+    const { foodRate, kmRate } = allowanceRates(user.app_metadata)
+    const orig = new Map((live.origByUser.get(userId) || []).map(d => [d.date, d]))
+    const now = new Map(row.days.map(d => [d.date, d]))
+    const days: EditDay[] = []
+    for (let i = 0; i < 7; i++) {
+      const date = addDays(monday, i)
+      const o = orig.get(date), c = now.get(date)
+      days.push({
+        date,
+        origShifts: o?.shifts ?? 0, origPresent: !!o, origKm: o?.km ?? 0, openShifts: o?.openShifts ?? 0,
+        present: !!c, km: c?.km ?? 0,
+        edited: (!!o !== !!c) || (!!o && !!c && Math.abs((o?.km ?? 0) - (c?.km ?? 0)) > 0.004)
+      })
+    }
+    const history = (await loadCorrectionHistory(monday, monday)).filter(h => h.userId === userId)
+    return {
+      success: true, monday, label: live.week.label, userId, name: row.name,
+      foodRate, kmRate, days, extra: row.extra, token, today: todayIST(), history
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { error: missingCorrTable(msg) ? CORR_SQL : msg }
+  }
+}
+
+export async function saveAllowanceCorrection(
+  monday: string, userId: string,
+  days: { date: string; present: boolean; km: number }[],
+  extra: number, reason: string, token: string, deletePassword: string
+): Promise<{ success: true } | { error: string }> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  const pwError = checkDeletePassword(deletePassword)
+  if (pwError) return { error: pwError.replace('Nothing was deleted.', 'Nothing was saved.') }
+  if (!isYmd(monday) || mondayOf(monday) !== monday || !isUuid(userId)) return { error: 'Choose a person and a week first.' }
+  if (!Array.isArray(days) || days.length > 7) return { error: 'Something is wrong with the days. Nothing was saved.' }
+  const extraAmt = round2(Number(extra) || 0)
+  if (!Number.isFinite(extraAmt) || Math.abs(extraAmt) > 100000) return { error: 'The extra amount looks wrong. Nothing was saved.' }
+
+  try {
+    if (await paidFor(monday, userId)) return { error: 'This week is marked as paid. Press "Undo paid" first, then correct it and mark it paid again.' }
+    const live = await liveWeek(monday)
+    const user = live.users.find((u: any) => u.id === userId)
+    if (!user) return { error: 'This person was not found.' }
+    const { foodRate, kmRate } = allowanceRates(user.app_metadata)
+    const orig = new Map((live.origByUser.get(userId) || []).map(d => [d.date, d]))
+    const today = todayIST()
+    const week = weekRange(monday)
+
+    const changes: { date: string; present: boolean; km: number; orig_present: boolean; orig_shifts: number; orig_km: number }[] = []
+    const seen = new Set<string>()
+    for (const d of days) {
+      if (!d || !isYmd(d.date) || d.date < monday || d.date > week.sunday || seen.has(d.date)) return { error: 'Something is wrong with the days. Nothing was saved.' }
+      seen.add(d.date)
+      if (d.date > today) return { error: 'A day that has not happened yet cannot be marked present.' }
+      const km = round2(Number(d.km) || 0)
+      if (d.present && (!Number.isFinite(km) || km < 0 || km > 2000)) return { error: `The km for ${d.date} look wrong. Nothing was saved.` }
+      const o = orig.get(d.date)
+      const present = !!d.present
+      const finalKm = present ? km : 0
+      const same = present === !!o && (!present || Math.abs(finalKm - (o?.km ?? 0)) < 0.005)
+      if (!same) changes.push({ date: d.date, present, km: finalKm, orig_present: !!o, orig_shifts: o?.shifts ?? 0, orig_km: o?.km ?? 0 })
+    }
+
+    // The total must not go below zero
+    const finalDays = new Map([...orig.entries()].map(([k, v]) => [k, v.km]))
+    for (const c of changes) { if (c.present) finalDays.set(c.date, c.km); else finalDays.delete(c.date) }
+    const km = round2([...finalDays.values()].reduce((t, x) => t + x, 0))
+    const total = round2(finalDays.size * foodRate + round2(km * kmRate) + extraAmt)
+    if (total < 0) return { error: 'The extra amount would make the total negative. Nothing was saved.' }
+
+    const name = (user.user_metadata?.name as string) || (user.user_metadata?.full_name as string) || user.email?.split('@')[0] || 'User'
+    const byName = (auth.user.user_metadata?.name as string) || auth.user.email || null
+    const { error } = await supabaseAdmin.rpc('fn_save_allowance_correction', {
+      p_week: monday, p_user_id: userId, p_user_name: name,
+      p_days: changes, p_extra: extraAmt, p_reason: reason || '', p_expected_token: String(token ?? ''),
+      p_by_id: auth.user.id, p_by_name: byName
+    })
+    if (error) {
+      const m = error.message || ''
+      if (missingCorrTable(m)) return { error: CORR_SQL }
+      if (/ALLOWANCE_STALE/.test(m)) return { error: 'This person\'s week was changed by someone else while you were editing. Nothing was saved. Close this window, open it again and redo your change.' }
+      if (/ALLOWANCE_WEEK_PAID/.test(m)) return { error: 'This week was just marked as paid. Nothing was saved. Press "Undo paid" first if it needs correcting.' }
+      if (/ALLOWANCE_NEEDS_REASON/.test(m)) return { error: 'Please write a short reason for the correction.' }
+      return { error: m }
+    }
+    revalidatePath('/dashboard/sales')
+    return { success: true }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { error: missingCorrTable(msg) ? CORR_SQL : msg }
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Monthly allowance report (admins only, read-only)
 //
 // One calendar month (India time). Days in weeks already marked as paid use the
@@ -870,13 +1184,13 @@ export async function undoAllowanceWeekPaid(monday: string, deletePassword: stri
 // -----------------------------------------------------------------------------
 export type MonthDay = { date: string; shifts: number; km: number; openShifts: number; foodRate: number; kmRate: number; food: number; travel: number; paid: boolean }
 export type MonthPerson = {
-  userId: string; name: string; role: string; daysPresent: number; km: number; food: number; travel: number; total: number
+  userId: string; name: string; role: string; daysPresent: number; km: number; food: number; travel: number; extra: number; total: number
   openShifts: number; noRates: boolean; foodRate: number; kmRate: number; days: MonthDay[]
 }
 export type MonthWeek = { monday: string; label: string; paid: boolean; paidAt: string | null; paidByName: string }
 
 export async function fetchAllowanceMonthReport(month: string): Promise<
-  | { success: true; month: string; label: string; people: MonthPerson[]; weeks: MonthWeek[]; shifts: Record<string, AllowanceShift[]>; totals: WeekTotals; monthEnded: boolean }
+  | { success: true; month: string; label: string; people: MonthPerson[]; weeks: MonthWeek[]; shifts: Record<string, AllowanceShift[]>; totals: WeekTotals; monthEnded: boolean; corrections: CorrectionRecord[] }
   | { error: string }
 > {
   const auth = await requireAdmin()
@@ -893,7 +1207,7 @@ export async function fetchAllowanceMonthReport(month: string): Promise<
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
 
   try {
-    const [shiftRows, users, paidRes] = await Promise.all([
+    const [shiftRows, users, paidRes, activeCorr, corrHistory] = await Promise.all([
       selectAllPages((a, b) =>
         supabaseAdmin.from('shifts')
           .select(SHIFT_REPORT_COLUMNS)
@@ -903,7 +1217,9 @@ export async function fetchAllowanceMonthReport(month: string): Promise<
       ),
       listAllUsersCached(),
       supabaseAdmin.from('allowance_payouts').select('*')
-        .gte('week_start', mondayOf(first)).lte('week_start', lastDate).is('cancelled_at', null)
+        .gte('week_start', mondayOf(first)).lte('week_start', lastDate).is('cancelled_at', null),
+      loadCorrections(mondayOf(first), lastDate),
+      loadCorrectionHistory(mondayOf(first), lastDate)
     ])
     const payouts = paidRes.error ? [] : (paidRes.data || [])
     const paidBy = new Map<string, any>() // `${user}|${monday}` -> payout
@@ -925,7 +1241,7 @@ export async function fetchAllowanceMonthReport(month: string): Promise<
     const people: MonthPerson[] = []
     const shifts: Record<string, AllowanceShift[]> = {}
     const n = (v: any) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
-    const userIds = new Set<string>([...byUser.keys(), ...(payouts as any[]).map(p => p.user_id)])
+    const userIds = new Set<string>([...byUser.keys(), ...(payouts as any[]).map(p => p.user_id), ...activeCorr.map(c => c.user_id)])
     for (const u of users) {
       const rates = allowanceRates(u.app_metadata)
       if (!userIds.has(u.id)) continue
@@ -950,7 +1266,28 @@ export async function fetchAllowanceMonthReport(month: string): Promise<
             foodRate: Number(p.food_rate) || 0, kmRate: Number(p.km_rate) || 0, food: 0, travel: 0, paid: true })
         }
       }
-      if (days.size === 0) continue
+      // 3. admin corrections, for weeks NOT paid for this person (paid weeks already include theirs)
+      let extra = 0
+      for (const c of activeCorr) {
+        if (c.user_id !== u.id || paidBy.has(`${u.id}|${ymd(c.week_start)}`)) continue
+        if (c.day_date) {
+          const date = ymd(c.day_date)
+          if (date < first || date > lastDate) continue
+          if (!c.present) { days.delete(date); continue }
+          const old = days.get(date)
+          days.set(date, { date, shifts: old?.shifts ?? 0, km: round2(Number(c.km) || 0), openShifts: old?.openShifts ?? 0,
+            foodRate: rates.foodRate, kmRate: rates.kmRate, food: 0, travel: 0, paid: false })
+        } else if (ymd(c.week_start) >= first && ymd(c.week_start) <= lastDate) {
+          extra += Number(c.extra_amount) || 0 // a week's extra belongs to the month the week starts in
+        }
+      }
+      // extra amounts inside paid weeks (saved as total - food - travel)
+      for (const p of payouts as any[]) {
+        if (p.user_id !== u.id || p.week_start < first || p.week_start > lastDate) continue
+        extra += (Number(p.total_amount) || 0) - (Number(p.food_amount) || 0) - (Number(p.travel_amount) || 0)
+      }
+      extra = round2(extra)
+      if (days.size === 0 && extra === 0) continue
       const list = [...days.values()].sort((a, b) => a.date.localeCompare(b.date))
       // per-day amounts unrounded; each person's totals are rounded once (as when a week is paid)
       for (const d of list) { d.food = d.foodRate; d.travel = d.km * d.kmRate }
@@ -962,7 +1299,7 @@ export async function fetchAllowanceMonthReport(month: string): Promise<
         role: u.app_metadata?.role || '',
         daysPresent: list.length,
         km: round2(list.reduce((t, d) => t + d.km, 0)),
-        food, travel, total: round2(food + travel),
+        food, travel, extra, total: round2(food + travel + extra),
         openShifts: list.reduce((t, d) => t + d.openShifts, 0),
         noRates: list.every(d => !(d.foodRate > 0) && !(d.kmRate > 0)),
         foodRate: rates.foodRate, kmRate: rates.kmRate,
@@ -978,14 +1315,153 @@ export async function fetchAllowanceMonthReport(month: string): Promise<
           orders: Number(s.orders_count) || 0, visits: Number(s.visits_count) || 0, orderValue: Number(s.total_order_value) || 0,
           cash: Number(s.cash_collected) || 0, online: Number(s.online_collected) || 0, due: Number(s.market_due) || 0
         }))
-        .sort((a: AllowanceShift, b: AllowanceShift) => String(a.start).localeCompare(String(a.start)))
+        .sort((a: AllowanceShift, b: AllowanceShift) => String(a.start).localeCompare(String(b.start)))
     }
     people.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
     const totals = people.reduce((t, r) => ({
       food: round2(t.food + r.food), travel: round2(t.travel + r.travel), total: round2(t.total + r.total), km: round2(t.km + r.km), days: t.days + r.daysPresent
     }), { food: 0, travel: 0, total: 0, km: 0, days: 0 })
-    return { success: true, month, label: `${MONTHS[m - 1]} ${y}`, people, weeks, shifts, totals, monthEnded: today > lastDate }
+    // Only corrections that belong to this month: a day inside it, or a one-off extra of a week starting in it
+    const monthCorrections = corrHistory.filter(c => c.date ? (c.date >= first && c.date <= lastDate) : (c.weekStart >= first && c.weekStart <= lastDate))
+    return { success: true, month, label: `${MONTHS[m - 1]} ${y}`, people, weeks, shifts, totals, monthEnded: today > lastDate, corrections: monthCorrections }
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
   }
+}
+
+// -----------------------------------------------------------------------------
+// Admin only: cancel a sale, delete / hide / restore a retailer
+// (20261117_sale_cancel_retailer_delete.sql)
+// -----------------------------------------------------------------------------
+const CANCEL_SQL = 'This needs a one-time database update: run 20261117_sale_cancel_retailer_delete.sql in Supabase. Nothing was changed.'
+const missingCancelSql = (message: string) =>
+  /sales_cancelled|fn_cancel_sale|fn_delete_retailer|fn_restore_retailer|is_active/.test(message) && /not find|does not exist|schema cache/i.test(message)
+
+/** Message if an admin removed this retailer, otherwise null. Never blocks on a read problem. */
+async function retailerRemovedError(retailerId: string): Promise<string | null> {
+  const { data } = await supabaseAdmin.from('retailers').select('*').eq('id', retailerId).maybeSingle()
+  return data && (data as any).is_active === false
+    ? 'This retailer was removed by an admin. Refresh the page; ask an admin to restore it if it is needed.'
+    : null
+}
+
+async function requireAdminFor(what: string): Promise<{ user: any; name: string } | { error: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const role = (user?.app_metadata?.role || '').toLowerCase()
+  if (!user || role !== 'admin') return { error: `Only admins can ${what}.` }
+  if (!(await isSessionValid())) return { error: 'Session expired. Please log in again.' }
+  return { user, name: (user.user_metadata?.name as string) || user.email || 'Admin' }
+}
+
+export type CancelledSale = {
+  id: string; retailerName: string; shopName: string; salesPersonId: string | null; salesPersonName: string
+  saleCreatedAt: string | null; amount: number; cash: number; online: number; due: number
+  reason: string; cancelledAt: string; cancelledByName: string
+  cashRefund: number; cashRefundPending: boolean; onlineRefund: number
+}
+export type RemovedRetailer = { id: string; name: string; shopName: string; territory: string; salesPersonName: string; removedAt: string | null; removedByName: string }
+
+/**
+ * Cancel a sale. Admin only, needs the delete password. The order leaves all
+ * totals and is kept in the cancelled-orders record. Cash collected on it comes
+ * off the sales person's running shift, or their next shift if none is running.
+ */
+export async function cancelSale(saleId: string, deletePassword: string, reason?: string) {
+  const pwError = checkDeletePassword(deletePassword)
+  if (pwError) return { error: pwError.replace('Nothing was deleted', 'Nothing was changed') }
+  const auth = await requireAdminFor('cancel a sale')
+  if ('error' in auth) return { error: auth.error }
+  if (!saleId) return { error: 'Order not found.' }
+
+  const { data, error } = await supabaseAdmin.rpc('fn_cancel_sale', {
+    p_sale_id: String(saleId),
+    p_reason: String(reason || '').trim().slice(0, 300),
+    p_user_id: auth.user.id,
+    p_user_name: auth.name
+  })
+  if (error) return { error: missingCancelSql(error.message) ? CANCEL_SQL : error.message }
+
+  revalidatePath('/dashboard/sales')
+  revalidatePath('/dashboard')
+  const r = (data || {}) as any
+  return {
+    success: true as const,
+    amount: Number(r.amount) || 0, cash: Number(r.cash) || 0, online: Number(r.online) || 0,
+    cashOffShiftNow: !!r.cashOffShiftNow, cashOffNextShift: !!r.cashOffNextShift
+  }
+}
+
+/**
+ * Delete a retailer. Admin only, needs the delete password. Refused while the
+ * retailer owes money. With no orders or visits it is deleted; otherwise it is
+ * hidden so past orders keep the name, and can be restored.
+ */
+export async function deleteRetailer(retailerId: string, deletePassword: string) {
+  const pwError = checkDeletePassword(deletePassword)
+  if (pwError) return { error: pwError }
+  const auth = await requireAdminFor('delete a retailer')
+  if ('error' in auth) return { error: auth.error }
+  if (!/^[0-9a-f-]{36}$/i.test(String(retailerId || ''))) return { error: 'Retailer not found.' }
+
+  const { data, error } = await supabaseAdmin.rpc('fn_delete_retailer', { p_retailer_id: retailerId, p_user_name: auth.name })
+  if (error) return { error: missingCancelSql(error.message) ? CANCEL_SQL : error.message }
+
+  revalidatePath('/dashboard/sales')
+  revalidatePath('/dashboard')
+  const r = (data || {}) as any
+  return { success: true as const, mode: (r.mode === 'deleted' ? 'deleted' : 'hidden') as 'deleted' | 'hidden', orders: Number(r.orders) || 0, visits: Number(r.visits) || 0 }
+}
+
+/** Bring back a retailer that was hidden. Admin only. */
+export async function restoreRetailer(retailerId: string) {
+  const auth = await requireAdminFor('restore a retailer')
+  if ('error' in auth) return { error: auth.error }
+  if (!/^[0-9a-f-]{36}$/i.test(String(retailerId || ''))) return { error: 'Retailer not found.' }
+
+  const { error } = await supabaseAdmin.rpc('fn_restore_retailer', { p_retailer_id: retailerId })
+  if (error) return { error: missingCancelSql(error.message) ? CANCEL_SQL : error.message }
+
+  revalidatePath('/dashboard/sales')
+  revalidatePath('/dashboard')
+  return { success: true as const }
+}
+
+/** Cancelled orders (newest first) and removed retailers, for the admin's records panel. */
+export async function fetchSalesAdminRecords(): Promise<{ cancelled: CancelledSale[]; removed: RemovedRetailer[]; needsSql: boolean } | { error: string }> {
+  const auth = await requireAdminFor('see cancelled orders')
+  if ('error' in auth) return { error: auth.error }
+
+  const [cancelledRes, retailersRes, users] = await Promise.all([
+    supabaseAdmin.from('sales_cancelled').select('*').order('cancelled_at', { ascending: false }).limit(500),
+    supabaseAdmin.from('retailers').select('*').eq('is_active', false).order('deleted_at', { ascending: false }).limit(500),
+    listAllUsersCached().catch(() => [] as any[])
+  ])
+  const needsSql = !!(cancelledRes.error && missingCancelSql(cancelledRes.error.message)) || !!(retailersRes.error && missingCancelSql(retailersRes.error.message))
+  if (!needsSql && cancelledRes.error) return { error: cancelledRes.error.message }
+  if (!needsSql && retailersRes.error) return { error: retailersRes.error.message }
+
+  const nameOf = new Map<string, string>()
+  for (const u of users as any[]) nameOf.set(u.id, (u.user_metadata?.name as string) || u.email || '')
+
+  const cancelled: CancelledSale[] = ((cancelledRes.data || []) as any[]).map(c => ({
+    id: c.id,
+    retailerName: c.retailer_name || '',
+    shopName: c.shop_name || '',
+    salesPersonId: c.sales_person_id || null,
+    salesPersonName: nameOf.get(c.sales_person_id) || '',
+    saleCreatedAt: c.sale_created_at || null,
+    amount: Number(c.amount) || 0, cash: Number(c.cash_amount) || 0, online: Number(c.online_amount) || 0, due: Number(c.due_amount) || 0,
+    reason: c.reason || '',
+    cancelledAt: c.cancelled_at,
+    cancelledByName: c.cancelled_by_name || '',
+    cashRefund: Number(c.cash_refund) || 0,
+    cashRefundPending: Number(c.cash_refund) > 0 && !c.cash_refund_applied_at,
+    onlineRefund: Number(c.online_refund) || 0
+  }))
+  const removed: RemovedRetailer[] = ((retailersRes.data || []) as any[]).map(r => ({
+    id: r.id, name: r.name || '', shopName: r.shop_name || '', territory: r.territory || '',
+    salesPersonName: nameOf.get(r.sales_person_id) || '', removedAt: r.deleted_at || null, removedByName: r.deleted_by_name || ''
+  }))
+  return { cancelled, removed, needsSql }
 }

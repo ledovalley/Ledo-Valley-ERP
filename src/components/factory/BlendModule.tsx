@@ -2,6 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Printer, Search, Lock, X, Check, Loader2 } from 'lucide-react';
 import { LooseLot, BlendProcess } from '@/types/factory';
 import type { BlendSubmitInput } from '@/app/factory/FactoryDashboardClient';
+import { todayBatchDate, todayBatchCode } from '@/utils/batchCode';
+import { todayIST } from '@/utils/allowanceWeek';
 
 interface BlendModuleProps {
   looseInventory: LooseLot[];
@@ -44,10 +46,8 @@ export default function BlendModule({
 
   // Auto-generate next batch number
   useEffect(() => {
-    const today = new Date();
-    const mm = String(today.getMonth() + 1).padStart(2, '0');
-    const dd = String(today.getDate()).padStart(2, '0');
-    setBatchNo(`G-${mm}-${dd}`);
+    // India date, so it matches the blend's date
+    setBatchNo(todayBatchDate());
   }, []);
 
   // Handle Revert & Edit
@@ -214,7 +214,8 @@ export default function BlendModule({
 
   const confirmSubmitBlend = async () => {
     if (isBusy) return;
-    const finalBatchNo = editedBatchNo || `BLEND-LV-${batchNo}`;
+    // New blend: today's code at the moment of saving (the page may have been open since yesterday)
+    const finalBatchNo = editedBatchNo || todayBatchCode();
 
     const lotsUsedArray = Object.keys(selectedLots).map(id => {
       const l = looseInventory.find(i => i.id === id);
@@ -236,7 +237,7 @@ export default function BlendModule({
       editingBlendId: editedBlendId,
       blendName: blendName.trim(),
       batchNo: finalBatchNo,
-      date: new Date().toISOString().split('T')[0],
+      date: todayIST(),
       lots: lotsUsedArray
     });
 
@@ -302,7 +303,7 @@ export default function BlendModule({
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-[#0B172B]/50 uppercase tracking-widest mb-1">Batch Code</span>
-                    <span className="text-lg font-bold font-mono text-[#0B172B]">{editedBatchNo || `BLEND-LV-${batchNo}`}</span>
+                    <span className="text-lg font-bold font-mono text-[#0B172B]">{editedBatchNo || todayBatchCode()}</span>
                   </div>
                 </div>
               </div>
