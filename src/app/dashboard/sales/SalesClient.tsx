@@ -51,6 +51,7 @@ import {
 import { RetailerCardSkeleton, TableRowSkeleton } from '@/components/ui/Skeleton';
 import WeeklyAllowances from './WeeklyAllowances';
 import RetailerInsights from './RetailerInsights';
+import RetailerHistoryDialog from './RetailerHistoryDialog';
 import { CancelSaleDialog, DeleteRetailerDialog, SalesAdminRecords } from './SalesAdminTools';
 
 // Hydration-safe helper to format ISO strings into readable Date and Time
@@ -104,6 +105,10 @@ export default function SalesClient({
   const [isEditRetailerModalOpen, setIsEditRetailerModalOpen] = useState(false);
   const [isSalesModalOpen, setIsSalesModalOpen] = useState(false);
   const [viewingRetailer, setViewingRetailer] = useState<any | null>(null);
+  // Order history for the retailer being viewed: admins open the full history dialog, others see the orders they can already see
+  const [historyRetailerId, setHistoryRetailerId] = useState<string | null>(null);
+  const [showOrderList, setShowOrderList] = useState(false);
+  useEffect(() => { setShowOrderList(false); }, [viewingRetailer?.id]);
   // Admin only: cancel a sale / delete a retailer (asks for the delete password)
   const isAdmin = currentUserRole === 'admin';
   const [cancelSaleTarget, setCancelSaleTarget] = useState<any | null>(null);
@@ -2340,6 +2345,40 @@ export default function SalesClient({
                 </div>
               </div>
 
+              {/* Order history */}
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isAdmin) setHistoryRetailerId(viewingRetailer.id);
+                    else setShowOrderList(v => !v);
+                  }}
+                  className="w-full flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-slate-50 hover:bg-slate-100 text-slate-800 text-xs font-semibold border border-slate-200 transition-all"
+                >
+                  <ClipboardList className="w-3.5 h-3.5 text-[#0D4728]" />
+                  <span>{isAdmin ? 'View order history' : showOrderList ? 'Hide order history' : 'View order history'}</span>
+                </button>
+                {!isAdmin && showOrderList && (() => {
+                  const orders = salesRecords
+                    .filter((o: any) => o.retailer_id === viewingRetailer.id)
+                    .sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)));
+                  if (orders.length === 0) return <p className="mt-2 text-xs text-slate-500 text-center py-3">No orders yet for this retailer.</p>;
+                  return (
+                    <div className="mt-2 rounded-2xl border border-slate-100 divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                      {orders.map((o: any) => (
+                        <div key={o.id} className="p-2.5 flex items-center justify-between gap-2 text-xs">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-900">{formatDateTime(o.created_at).date}</p>
+                            <p className="text-slate-500 capitalize truncate">{(o.payment_status || 'credit')} · {(o.delivery_status || 'delivered')}{Number(o.due_amount) > 0 ? ` · due ₹${Number(o.due_amount).toLocaleString('en-IN')}` : ''}</p>
+                          </div>
+                          <span className="font-bold text-slate-900 shrink-0">₹{Number(o.amount || 0).toLocaleString('en-IN')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+
               {/* Action Buttons: Edit Retailer + Log Order */}
               <div className="pt-3.5 sm:pt-4 mt-2 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 shrink-0">
                 <button
@@ -2403,6 +2442,8 @@ export default function SalesClient({
           </div>
         </div>
       )}
+
+      {historyRetailerId && <RetailerHistoryDialog retailerId={historyRetailerId} onClose={() => setHistoryRetailerId(null)} />}
 
       {/* 5. EDIT RETAILER MODAL */}
       {isEditRetailerModalOpen && (

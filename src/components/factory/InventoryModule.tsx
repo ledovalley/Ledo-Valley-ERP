@@ -76,7 +76,8 @@ export default function InventoryModule({
   const auditLiveStock = auditLiveLot ? `${auditLiveLot.bags}/${auditLiveLot.weight}` : '';
 
   // Sell loose tea (whole bags, straight from a lot)
-  const canSell = !!onSellLoose && ['admin', 'manager'].includes(systemUser?.role);
+  // The factory page maps an admin to 'super_admin' and passes onSellLoose only to admins and managers
+  const canSell = !!onSellLoose && ['super_admin', 'admin', 'manager'].includes(systemUser?.role);
   const [sellLotId, setSellLotId] = useState<string | null>(null);
   const [sellForm, setSellForm] = useState({ bags: '', date: todayIST(), buyer: '', invoiceNo: '' });
   const [isSelling, setIsSelling] = useState(false);
