@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { DIAL_TICKS } from '../constants';
 
 interface ShiftChronographDialProps {
@@ -10,9 +11,24 @@ interface ShiftChronographDialProps {
 
 export function ShiftChronographDial({
   activeShift,
-  timerSeconds,
+  timerSeconds: baseSeconds,
   getTimerParts
 }: ShiftChronographDialProps) {
+  // The dashboard hands over the elapsed time every 10 seconds; the dial counts the
+  // seconds in between itself, so only this small dial redraws every second.
+  const running = !!activeShift && activeShift.status === 'active';
+  const [, setTick] = useState(0);
+  const base = useRef({ value: baseSeconds, at: Date.now() });
+  if (base.current.value !== baseSeconds) base.current = { value: baseSeconds, at: Date.now() };
+  useEffect(() => {
+    if (!running) return;
+    const i = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(i);
+  }, [running]);
+  const timerSeconds = running && baseSeconds > 0
+    ? baseSeconds + Math.max(0, Math.floor((Date.now() - base.current.at) / 1000))
+    : baseSeconds;
+
   // 8-hour progress ratio (0.0 to 1.0)
   const eightHourProgress = activeShift ? Math.min(1, timerSeconds / 28800) : 0;
   const progressDegrees = eightHourProgress * 360;

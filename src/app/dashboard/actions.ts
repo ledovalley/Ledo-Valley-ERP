@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/utils/supabase/server'
+import { createClient, getCachedUser } from '@/utils/supabase/server'
 import { supabaseAdmin } from '@/utils/supabase/admin'
 import { selectAllPages } from '@/utils/selectAll'
 import { listAllUsersCached } from '@/utils/usersList'
@@ -33,7 +33,7 @@ export async function isSessionValid(): Promise<boolean> {
 
 export async function fetchActiveShift() {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   if (!user) return null
 
   const { data, error } = await supabase
@@ -54,7 +54,7 @@ export async function fetchActiveShift() {
 
 export async function fetchUserRecentRoutes(): Promise<string[]> {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   if (!user) return []
 
   const { data, error } = await supabase
@@ -83,8 +83,7 @@ export async function fetchUserRecentRoutes(): Promise<string[]> {
 
 export async function fetchActiveFieldDevices() {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getCachedUser()
     const userRole = (user?.app_metadata?.role || '').toLowerCase()
     const isManagement = ['admin', 'manager'].includes(userRole)
 
@@ -143,7 +142,7 @@ export async function fetchActiveFieldDevices() {
 
 export async function startShift(formData: FormData) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   if (!user || !(await isSessionValid())) {
     return { error: "Session expired. Please log in again." }
   }
@@ -190,7 +189,7 @@ export async function startShift(formData: FormData) {
 
 export async function pauseShift(shiftId: string) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   if (!user || !(await isSessionValid())) {
     return { error: "Session expired. Please log in again." }
   }
@@ -216,7 +215,7 @@ export async function pauseShift(shiftId: string) {
 
 export async function resumeShift(shiftId: string) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   if (!user || !(await isSessionValid())) {
     return { error: "Session expired. Please log in again." }
   }
@@ -264,7 +263,7 @@ export async function resumeShift(shiftId: string) {
 
 export async function endShift(formData: FormData) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   if (!user || !(await isSessionValid())) {
     return { error: "Session expired. Please log in again." }
   }
@@ -344,7 +343,7 @@ export async function endShift(formData: FormData) {
 
 export async function fetchEmployeeAuditLedger(targetUserId?: string) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   const role = (user?.app_metadata?.role || '').toLowerCase()
 
   // If user is not admin/manager, they can only view their own ledger
@@ -431,8 +430,7 @@ export interface DashboardTargetsProgress {
 
 export async function fetchDashboardTargetsProgress(targetMonth?: string): Promise<DashboardTargetsProgress> {
   const month = targetMonth || new Date().toISOString().slice(0, 7)
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+    const user = await getCachedUser()
 
   const userRole = (user?.app_metadata?.role || 'employee').toLowerCase()
   const isManagement = ['admin', 'manager'].includes(userRole)
@@ -524,58 +522,72 @@ export interface TerritoryDistributionItem {
 
 export async function fetchExactTerritoryDistribution(): Promise<TerritoryDistributionItem[]> {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getCachedUser()
     const userRole = (user?.app_metadata?.role || '').toLowerCase()
     const isManagement = ['admin', 'manager'].includes(userRole)
 
     const ownOnly = !isManagement && !!user?.id
-    const shifts = await selectAllPages((from, to) => {
-      let shiftsQuery = supabaseAdmin
-        .from('shifts')
-        .select('id, territory, total_order_value, orders_count, visits_count')
-        .order('id', { ascending: true })
-      if (ownOnly) shiftsQuery = shiftsQuery.eq('user_id', user!.id)
-      return shiftsQuery.range(from, to)
-    })
-    // Retailers removed by an admin are left out (works before the is_active column exists too)
-    const readRetailers = (cols: string) => selectAllPages((from, to) => {
-      let retailersQuery = supabaseAdmin
-        .from('retailers')
-        .select(cols)
-        .order('id', { ascending: true })
-      if (ownOnly) retailersQuery = retailersQuery.eq('sales_person_id', user!.id)
-      return retailersQuery.range(from, to)
-    })
-    let retailers: any[]
-    try { retailers = await readRetailers('id, territory, is_active') }
-    catch { retailers = await readRetailers('id, territory') }
-    retailers = retailers.filter(r => r.is_active !== false)
-
     const map = new Map<string, { revenue: number; orders: number; count: number }>()
 
-    if (shifts && shifts.length > 0) {
-      shifts.forEach((s: any) => {
-        const rawTerritory = s.territory?.trim()
-        if (rawTerritory) {
-          const current = map.get(rawTerritory) || { revenue: 0, orders: 0, count: 0 }
-          current.revenue += Number(s.total_order_value) || 0
-          current.orders += Number(s.orders_count) || 0
-          current.count += 1
-          map.set(rawTerritory, current)
-        }
+    // Fast way: the database adds it up (20261121_territory_distribution.sql).
+    // If that hasn't been installed yet, fall back to adding it up here.
+    const { data: summary, error: summaryError } = await supabaseAdmin.rpc('fn_territory_distribution', {
+      p_user: ownOnly ? user!.id : null
+    })
+    if (!summaryError && Array.isArray(summary)) {
+      for (const row of summary as any[]) {
+        map.set(String(row.territory), {
+          revenue: Number(row.revenue) || 0,
+          orders: Number(row.orders) || 0,
+          count: Number(row.cnt) || 0
+        })
+      }
+    } else {
+      const shifts = await selectAllPages((from, to) => {
+        let shiftsQuery = supabaseAdmin
+          .from('shifts')
+          .select('id, territory, total_order_value, orders_count, visits_count')
+          .order('id', { ascending: true })
+        if (ownOnly) shiftsQuery = shiftsQuery.eq('user_id', user!.id)
+        return shiftsQuery.range(from, to)
       })
-    }
+      // Retailers removed by an admin are left out (works before the is_active column exists too)
+      const readRetailers = (cols: string) => selectAllPages((from, to) => {
+        let retailersQuery = supabaseAdmin
+          .from('retailers')
+          .select(cols)
+          .order('id', { ascending: true })
+        if (ownOnly) retailersQuery = retailersQuery.eq('sales_person_id', user!.id)
+        return retailersQuery.range(from, to)
+      })
+      let retailers: any[]
+      try { retailers = await readRetailers('id, territory, is_active') }
+      catch { retailers = await readRetailers('id, territory') }
+      retailers = retailers.filter(r => r.is_active !== false)
 
-    if (retailers && retailers.length > 0) {
-      retailers.forEach((r: any) => {
-        const rawTerritory = r.territory?.trim()
-        if (rawTerritory) {
-          const current = map.get(rawTerritory) || { revenue: 0, orders: 0, count: 0 }
-          current.count += 1
-          map.set(rawTerritory, current)
-        }
-      })
+      if (shifts && shifts.length > 0) {
+        shifts.forEach((s: any) => {
+          const rawTerritory = s.territory?.trim()
+          if (rawTerritory) {
+            const current = map.get(rawTerritory) || { revenue: 0, orders: 0, count: 0 }
+            current.revenue += Number(s.total_order_value) || 0
+            current.orders += Number(s.orders_count) || 0
+            current.count += 1
+            map.set(rawTerritory, current)
+          }
+        })
+      }
+
+      if (retailers && retailers.length > 0) {
+        retailers.forEach((r: any) => {
+          const rawTerritory = r.territory?.trim()
+          if (rawTerritory) {
+            const current = map.get(rawTerritory) || { revenue: 0, orders: 0, count: 0 }
+            current.count += 1
+            map.set(rawTerritory, current)
+          }
+        })
+      }
     }
 
     if (map.size === 0) {
@@ -661,8 +673,7 @@ function formatTimelineDateKey(isoString: string): string {
 
 export async function fetchFieldOperationsTimeline(): Promise<FieldActivityEvent[]> {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getCachedUser()
     const userRole = (user?.app_metadata?.role || '').toLowerCase()
     const isManagement = ['admin', 'manager'].includes(userRole)
 
@@ -689,12 +700,13 @@ export async function fetchFieldOperationsTimeline(): Promise<FieldActivityEvent
       salesQuery = salesQuery.eq('sales_person_id', user.id)
     }
 
-    const { data: shifts } = await shiftsQuery
-    const { data: sales } = await salesQuery
+    const [{ data: shifts }, { data: sales }] = await Promise.all([shiftsQuery, salesQuery])
 
-    const { data: retailers } = await supabaseAdmin
-      .from('retailers')
-      .select('id, name, shop_name, territory')
+    // Only the retailers these orders belong to (not the whole retailer list)
+    const retailerIds = Array.from(new Set((sales || []).map((x: any) => x.retailer_id).filter(Boolean)))
+    const { data: retailers } = retailerIds.length > 0
+      ? await supabaseAdmin.from('retailers').select('id, name, shop_name, territory').in('id', retailerIds)
+      : { data: [] as any[] }
 
     const retailerMap = new Map<string, any>()
     retailers?.forEach(r => retailerMap.set(r.id, r))
@@ -814,8 +826,7 @@ export interface WeeklyProgressResponse {
 
 export async function fetchWeeklyProgressData(): Promise<WeeklyProgressResponse> {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getCachedUser()
     const userId = user?.id
 
     const userRole = (user?.app_metadata?.role || '').toLowerCase()
@@ -976,8 +987,7 @@ function getTodayISTBounds() {
 export async function fetchDailyOperationalTargets(): Promise<DailyOperationalTargets> {
   try {
     // Only logged-in people may read the targets (this reads with the server key)
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getCachedUser()
     if (!user) {
       return { min_shift_hours: 6, target_visits: 5, target_orders: 3, target_distance_km: 15 }
     }
@@ -1014,8 +1024,7 @@ export async function fetchDailyOperationalTargets(): Promise<DailyOperationalTa
 }
 
 export async function saveDailyOperationalTargets(targets: DailyOperationalTargets) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   const role = user?.app_metadata?.role
 
   if (!user || !['admin', 'manager'].includes(role) || !(await isSessionValid())) {
@@ -1060,44 +1069,37 @@ export async function fetchDailyPriorities(): Promise<{
   }
 
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    const targets = await fetchDailyOperationalTargets()
+    const user = await getCachedUser()
     const { startOfDay, endOfDay } = getTodayISTBounds()
 
-    // 1. Fetch current user's shift for TODAY ONLY
-    let todayShift: any = null
-    if (user) {
-      // Check active or paused shift right now
-      const { data: activeShift } = await supabaseAdmin
-        .from('shifts')
-        .select('*')
-        .eq('user_id', user.id)
-        .in('status', ['active', 'paused'])
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
+    // The lookups below don't depend on each other, so they run together
+    // (one wait instead of five, which matters on a slow connection).
+    const [targets, activeShiftRes, completedTodayRes, visitsRes, salesRes] = await Promise.all([
+      fetchDailyOperationalTargets(),
+      // 1. Current user's shift right now (active or paused)...
+      user
+        ? supabaseAdmin.from('shifts').select('*').eq('user_id', user.id)
+            .in('status', ['active', 'paused']).order('created_at', { ascending: false }).limit(1).maybeSingle()
+        : Promise.resolve({ data: null }),
+      // ...or one that started today and has ended (used only if none is running)
+      user
+        ? supabaseAdmin.from('shifts').select('*').eq('user_id', user.id)
+            .in('status', ['completed', 'ended']).gte('created_at', startOfDay).lte('created_at', endOfDay)
+            .order('created_at', { ascending: false }).limit(1).maybeSingle()
+        : Promise.resolve({ data: null }),
+      // 2. Today's retailer visits for THIS USER ONLY
+      user
+        ? supabaseAdmin.from('retailer_visits').select('id', { count: 'exact', head: true })
+            .eq('sales_person_id', user.id).gte('created_at', startOfDay).lte('created_at', endOfDay)
+        : Promise.resolve({ count: 0 }),
+      // 3. Today's retailer orders for THIS USER ONLY
+      user
+        ? supabaseAdmin.from('sales_records').select('amount, cash_amount').eq('sales_person_id', user.id)
+            .gte('created_at', startOfDay).lte('created_at', endOfDay)
+        : Promise.resolve({ data: null })
+    ])
 
-      if (activeShift) {
-        todayShift = activeShift
-      } else {
-        // Check shift created/started today that is completed/ended
-        const { data: completedToday } = await supabaseAdmin
-          .from('shifts')
-          .select('*')
-          .eq('user_id', user.id)
-          .in('status', ['completed', 'ended'])
-          .gte('created_at', startOfDay)
-          .lte('created_at', endOfDay)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        if (completedToday) {
-          todayShift = completedToday
-        }
-      }
-    }
+    const todayShift: any = (activeShiftRes as any).data || (completedTodayRes as any).data || null
 
     const isShiftActive = Boolean(todayShift && (todayShift.status === 'active' || todayShift.status === 'paused'))
     const isShiftCompletedToday = Boolean(todayShift && (todayShift.status === 'completed' || todayShift.status === 'ended'))
@@ -1118,36 +1120,17 @@ export async function fetchDailyPriorities(): Promise<{
     const shiftMinsFloor = Math.floor((elapsedSeconds % 3600) / 60)
     const isShiftTimeMet = Boolean(todayShift && elapsedSeconds >= (targets.min_shift_hours * 3600))
 
-    // 2. Fetch today's retailer visits count for THIS USER ONLY
-    let userVisitsCount = 0
-    if (user) {
-      const { count: visitsCount } = await supabaseAdmin
-        .from('retailer_visits')
-        .select('id', { count: 'exact', head: true })
-        .eq('sales_person_id', user.id)
-        .gte('created_at', startOfDay)
-        .lte('created_at', endOfDay)
-      userVisitsCount = visitsCount || 0
-    }
+    const userVisitsCount = (visitsRes as any).count || 0
     const shiftVisits = Number(todayShift?.visits_count || 0)
     const totalVisits = Math.max(userVisitsCount, shiftVisits)
     const isVisitsMet = totalVisits >= targets.target_visits
 
-    // 3. Fetch today's retailer orders count for THIS USER ONLY
     let userOrdersCount = 0
     let userCashFromOrders = 0
-    if (user) {
-      const { data: userSalesData } = await supabaseAdmin
-        .from('sales_records')
-        .select('amount, cash_amount')
-        .eq('sales_person_id', user.id)
-        .gte('created_at', startOfDay)
-        .lte('created_at', endOfDay)
-
-      if (userSalesData) {
-        userOrdersCount = userSalesData.length
-        userCashFromOrders = userSalesData.reduce((acc, curr) => acc + (Number(curr.cash_amount) || 0), 0)
-      }
+    const userSalesData = (salesRes as any).data as any[] | null
+    if (userSalesData) {
+      userOrdersCount = userSalesData.length
+      userCashFromOrders = userSalesData.reduce((acc, curr) => acc + (Number(curr.cash_amount) || 0), 0)
     }
     const shiftOrders = Number(todayShift?.orders_count || 0)
     const totalOrders = Math.max(userOrdersCount, shiftOrders)

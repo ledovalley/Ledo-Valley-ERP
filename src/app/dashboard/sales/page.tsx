@@ -1,6 +1,6 @@
 import { fetchRetailers, fetchSalesRecords, fetchProducts } from "./actions";
 import SalesClient from "./SalesClient";
-import { createClient } from "@/utils/supabase/server";
+import { getCachedUser } from "@/utils/supabase/server";
 import { listAllUsersCached } from "@/utils/usersList";
 import { connection } from "next/server";
 
@@ -8,8 +8,7 @@ export const instant = false;
 
 export default async function SalesPage() {
   await connection();
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getCachedUser();
   const currentUserRole = user?.app_metadata?.role || "employee";
   const currentUserId = user?.id || "";
   const currentUserName = user?.user_metadata?.name || user?.email?.split('@')[0] || "Team Member";

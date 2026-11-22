@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/utils/supabase/server'
+import { createClient, getCachedUser } from '@/utils/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { isSessionValid } from '@/app/dashboard/actions'
 import { selectAllPages } from '@/utils/selectAll'
@@ -14,7 +14,7 @@ import { phoneKey } from '@/utils/phoneMatch'
 // Retailer Actions
 export async function fetchRetailers() {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   const role = (user?.app_metadata?.role || '').toLowerCase()
 
   // Admins & managers see all, other staff see only theirs
@@ -37,7 +37,7 @@ export async function fetchRetailers() {
 
 export async function createRetailer(formData: FormData) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   if (!user || !(await isSessionValid())) {
     return { error: "Session expired. Please log in again." }
   }
@@ -55,8 +55,12 @@ export async function createRetailer(formData: FormData) {
   const key = phoneKey(phone)
   if (key) {
     try {
+      // Only fetch rows whose phone contains these 10 digits in order, whatever the
+      // spacing or dashes (a fast, narrow query instead of loading every retailer).
+      // The exact match is still checked below.
+      const pattern = '%' + key.split('').join('%') + '%'
       const all = await selectAllPages((from, to) =>
-        supabaseAdmin.from('retailers').select('*')
+        supabaseAdmin.from('retailers').select('*').ilike('phone', pattern)
           .order('id', { ascending: true }).range(from, to))
       const dup = (all as any[]).find(r => r.is_active !== false && phoneKey(r.phone) === key)
       if (dup) {
@@ -98,7 +102,7 @@ export async function createRetailer(formData: FormData) {
 
 export async function updateRetailer(id: string, formData: FormData) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   if (!user || !(await isSessionValid())) {
     return { error: "Session expired. Please log in again." }
   }
@@ -166,7 +170,7 @@ const SALE_SELECT = `
  */
 export async function fetchSalesRecords() {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   const role = (user?.app_metadata?.role || '').toLowerCase()
 
   const ownOnly = role !== 'admin' && role !== 'manager'
@@ -215,7 +219,7 @@ export async function fetchSalesPeriod(input: {
   | { error: string }
 > {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   const role = (user?.app_metadata?.role || '').toLowerCase()
   if (!user || !(role === 'admin' || role === 'manager')) {
     return { error: 'Only admins and managers can look at other periods.' }
@@ -279,7 +283,7 @@ export async function fetchSalesPeriod(input: {
 
 export async function createSaleRecord(formData: FormData) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   if (!user || !(await isSessionValid())) {
     return { error: "Session expired. Please log in again." }
   }
@@ -323,31 +327,26 @@ export async function createSaleRecord(formData: FormData) {
     return { error: 'The cash, online and due amounts do not add up to the order amount. Please check them and try again.' }
   }
 
-  const removed = await retailerRemovedError(retailer_id)
+  // The three checks below don't depend on each other, so they run at the same time
+  // (one wait instead of three, which matters on a slow mobile connection).
+  // Same order saved twice (double tap, or a retry after a slow connection): the second
+  // is refused if this sales person already saved an identical order a moment ago.
+  const since = new Date(now.getTime() - 60_000).toISOString()
+  let recentQuery = supabase.from('sales_records').select('id').eq('retailer_id', retailer_id)
+    .eq('sales_person_id', user.id).eq('amount', amount).gte('created_at', since).limit(1)
+  if (notes) recentQuery = recentQuery.eq('notes', notes)
+  const [removed, recentRes, shiftRes] = await Promise.all([
+    retailerRemovedError(retailer_id),
+    recentQuery,
+    // does the sales rep have an active shift?
+    supabase.from('shifts').select('id').eq('user_id', user?.id).eq('status', 'active')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle()
+  ])
   if (removed) return { error: removed }
-
-  // Same order saved twice (double tap, or a retry after a slow connection): refuse the
-  // second one if this sales person already saved an identical order a moment ago.
-  {
-    const since = new Date(now.getTime() - 60_000).toISOString()
-    let q = supabase.from('sales_records').select('id').eq('retailer_id', retailer_id)
-      .eq('sales_person_id', user.id).eq('amount', amount).gte('created_at', since).limit(1)
-    if (notes) q = q.eq('notes', notes)
-    const { data: recent } = await q
-    if (recent && recent.length > 0) {
-      return { error: 'This same order was already saved a moment ago, so it was not saved again. Check the orders list.' }
-    }
+  if (recentRes.data && recentRes.data.length > 0) {
+    return { error: 'This same order was already saved a moment ago, so it was not saved again. Check the orders list.' }
   }
-
-  // Check if sales rep has an active shift
-  const { data: activeShift } = await supabase
-    .from('shifts')
-    .select('id')
-    .eq('user_id', user?.id)
-    .eq('status', 'active')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  const activeShift = shiftRes.data
 
   const saleRow = {
     retailer_id,
@@ -388,39 +387,41 @@ export async function createSaleRecord(formData: FormData) {
 
   if (error) return { error: error.message }
 
-  // Log as verified visit in retailer_visits
-  const { error: visitErr } = await supabase.from('retailer_visits').insert({
-    retailer_id,
-    sales_person_id: user?.id,
-    shift_id: activeShift?.id || null,
-    visit_type: 'order',
-    notes: `Order booked: ₹${amount.toLocaleString('en-IN')}`,
-    created_at: createdAt
-  })
-  if (visitErr) console.error('Sale saved but visit log failed:', newSale?.id, visitErr)
-
-  // If rep is on an active shift, add to its totals in one atomic database
-  // update, so two orders at the same moment can't overwrite each other.
-  if (activeShift) {
-    const { error: shiftErr } = await supabase.rpc('fn_record_sale_on_shift', {
-      p_shift_id: activeShift.id,
-      p_order_value: amount,
-      p_cash_amount: cash_amount,
-      p_online_amount: online_amount,
-      p_due_amount: due_amount
-    })
-    if (shiftErr) {
-      console.error('Sale saved but shift totals not updated:', newSale?.id, shiftErr)
-      revalidatePath('/dashboard/sales')
-      revalidatePath('/dashboard')
-      return {
-        success: true,
-        sale: newSale,
-        warning: ['Order saved, but your shift totals could not be updated. Please tell your manager.', deliveryWarning].filter(Boolean).join(' ')
-      }
+  // Log the order as a verified visit, and (if the rep is on a running shift) add it to the
+  // shift's totals in one atomic database update, so two orders at the same moment can't
+  // overwrite each other. The two don't depend on each other, so they run together.
+  const [visitRes, shiftRpc] = await Promise.all([
+    supabase.from('retailer_visits').insert({
+      retailer_id,
+      sales_person_id: user?.id,
+      shift_id: activeShift?.id || null,
+      visit_type: 'order',
+      notes: `Order booked: ₹${amount.toLocaleString('en-IN')}`,
+      created_at: createdAt
+    }),
+    activeShift
+      ? supabase.rpc('fn_record_sale_on_shift', {
+          p_shift_id: activeShift.id,
+          p_order_value: amount,
+          p_cash_amount: cash_amount,
+          p_online_amount: online_amount,
+          p_due_amount: due_amount
+        })
+      : Promise.resolve({ error: null })
+  ])
+  if (visitRes.error) console.error('Sale saved but visit log failed:', newSale?.id, visitRes.error)
+  const shiftErr = shiftRpc.error
+  if (shiftErr) {
+    console.error('Sale saved but shift totals not updated:', newSale?.id, shiftErr)
+    revalidatePath('/dashboard/sales')
+    revalidatePath('/dashboard')
+    return {
+      success: true,
+      sale: newSale,
+      warning: ['Order saved, but your shift totals could not be updated. Please tell your manager.', deliveryWarning].filter(Boolean).join(' ')
     }
   }
-  
+
   revalidatePath('/dashboard/sales')
   revalidatePath('/dashboard')
   return { success: true, sale: newSale, warning: deliveryWarning }
@@ -429,7 +430,7 @@ export async function createSaleRecord(formData: FormData) {
 // Log "No Order" Retailer Visit
 export async function logNoOrderVisit(formData: FormData) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   if (!user || !(await isSessionValid())) {
     return { error: "Session expired. Please log in again." }
   }
@@ -481,7 +482,7 @@ export async function logNoOrderVisit(formData: FormData) {
 // Update Delivery Status on a Sale Record
 export async function updateSaleDeliveryStatus(saleId: string, deliveryStatus: 'pending' | 'delivered' | 'cancelled') {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   if (!user || !(await isSessionValid())) {
     return { error: "Session expired. Please log in again." }
   }
@@ -516,7 +517,7 @@ export async function collectSalePayment(
   paymentData: { cashAmount: number; onlineAmount: number }
 ) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   if (!user || !(await isSessionValid())) {
     return { error: "Session expired. Please log in again." }
   }
@@ -564,7 +565,7 @@ export async function collectSalePayment(
 // Fetch Retailer Visits
 export async function fetchRetailerVisits(limit = 50) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   const role = user?.app_metadata?.role
 
   let query = supabase.from('retailer_visits').select(`
@@ -729,8 +730,7 @@ async function loadCorrectionHistory(fromMonday: string, toMonday: string): Prom
 }
 
 async function requireAdmin(): Promise<{ user: any } | { error: string }> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   const role = (user?.app_metadata?.role || '').toLowerCase()
   if (!user || role !== 'admin') return { error: 'Only admins can see allowances.' }
   if (!(await isSessionValid())) return { error: 'Session expired. Please log in again.' }
@@ -1346,8 +1346,7 @@ async function retailerRemovedError(retailerId: string): Promise<string | null> 
 }
 
 async function requireAdminFor(what: string): Promise<{ user: any; name: string } | { error: string }> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getCachedUser()
   const role = (user?.app_metadata?.role || '').toLowerCase()
   if (!user || role !== 'admin') return { error: `Only admins can ${what}.` }
   if (!(await isSessionValid())) return { error: 'Session expired. Please log in again.' }

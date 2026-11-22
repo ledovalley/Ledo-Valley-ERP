@@ -49,10 +49,15 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { RetailerCardSkeleton, TableRowSkeleton } from '@/components/ui/Skeleton';
-import WeeklyAllowances from './WeeklyAllowances';
-import RetailerInsights from './RetailerInsights';
-import RetailerHistoryDialog from './RetailerHistoryDialog';
-import { CancelSaleDialog, DeleteRetailerDialog, SalesAdminRecords } from './SalesAdminTools';
+import dynamic from 'next/dynamic';
+// Admin-only screens are loaded only when an admin opens them, so a sales person's phone
+// doesn't download them (a smaller, faster first load on mobile data).
+const WeeklyAllowances = dynamic(() => import('./WeeklyAllowances'));
+const RetailerInsights = dynamic(() => import('./RetailerInsights'));
+const RetailerHistoryDialog = dynamic(() => import('./RetailerHistoryDialog'));
+const CancelSaleDialog = dynamic(() => import('./SalesAdminTools').then(m => m.CancelSaleDialog));
+const DeleteRetailerDialog = dynamic(() => import('./SalesAdminTools').then(m => m.DeleteRetailerDialog));
+const SalesAdminRecords = dynamic(() => import('./SalesAdminTools').then(m => m.SalesAdminRecords));
 
 // Hydration-safe helper to format ISO strings into readable Date and Time
 const formatDateTime = (isoString?: string) => {
@@ -823,7 +828,7 @@ export default function SalesClient({
           </div>
 
           {/* Segmented Capsule Tabs (Retailers vs Sales) */}
-          <div className={`w-full grid ${currentUserRole === 'admin' ? 'grid-cols-4' : 'grid-cols-2'} sm:inline-flex sm:w-auto p-1 bg-white/80 backdrop-blur-md rounded-full border border-slate-200/80 shadow-xs gap-1`}>
+          <div className={`w-full grid grid-cols-2 sm:inline-flex sm:w-auto p-1 bg-white/80 backdrop-blur-md rounded-3xl sm:rounded-full border border-slate-200/80 shadow-xs gap-1`}>
             <button
               onClick={() => setActiveTab('retailers')}
               className={`flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-medium transition-all ${activeTab === 'retailers'

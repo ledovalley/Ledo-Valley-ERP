@@ -230,9 +230,11 @@ export default function DashboardOverviewClient({
     setTimerSeconds(calcElapsed());
 
     if (activeShift.status === 'active') {
+      // The whole dashboard re-draws on every tick, so it ticks every 10 seconds
+      // (hours and minutes stay correct); the dial counts the seconds on its own.
       const interval = setInterval(() => {
         setTimerSeconds(calcElapsed());
-      }, 1000);
+      }, 10000);
       return () => clearInterval(interval);
     }
   }, [activeShift]);
