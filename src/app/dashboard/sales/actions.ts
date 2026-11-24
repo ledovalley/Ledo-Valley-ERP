@@ -660,13 +660,14 @@ const CORR_SQL = 'Allowance corrections are not set up yet: run supabase/migrati
  * isn't set up yet there are none; any other read problem stops the report, because
  * showing amounts without the corrections would be wrong.
  */
-async function loadCorrections(fromMonday: string, toMonday: string): Promise<CorrRow[]> {
+async function loadCorrections(fromMonday: string, toMonday: string, onlyUserId?: string): Promise<CorrRow[]> {
   try {
-    return await selectAllPages((a, b) =>
-      supabaseAdmin.from('allowance_corrections').select('*')
+    return await selectAllPages((a, b) => {
+      let q = supabaseAdmin.from('allowance_corrections').select('*')
         .gte('week_start', fromMonday).lte('week_start', toMonday).is('cancelled_at', null)
-        .order('id', { ascending: true }).range(a, b)
-    ) as CorrRow[]
+      if (onlyUserId) q = q.eq('user_id', onlyUserId)
+      return q.order('id', { ascending: true }).range(a, b)
+    }) as CorrRow[]
   } catch (err) {
     if (missingCorrTable(err instanceof Error ? err.message : String(err))) return []
     throw err
@@ -705,14 +706,15 @@ export type CorrectionRecord = {
 }
 
 /** Every correction (also retired ones) for weeks between two Mondays, oldest first. Read-only. */
-async function loadCorrectionHistory(fromMonday: string, toMonday: string): Promise<CorrectionRecord[]> {
+async function loadCorrectionHistory(fromMonday: string, toMonday: string, onlyUserId?: string): Promise<CorrectionRecord[]> {
   let rows: CorrRow[] = []
   try {
-    rows = await selectAllPages((a, b) =>
-      supabaseAdmin.from('allowance_corrections').select('*')
+    rows = await selectAllPages((a, b) => {
+      let q = supabaseAdmin.from('allowance_corrections').select('*')
         .gte('week_start', fromMonday).lte('week_start', toMonday)
-        .order('created_at', { ascending: true }).order('id', { ascending: true }).range(a, b)
-    ) as CorrRow[]
+      if (onlyUserId) q = q.eq('user_id', onlyUserId)
+      return q.order('created_at', { ascending: true }).order('id', { ascending: true }).range(a, b)
+    }) as CorrRow[]
   } catch (err) {
     if (missingCorrTable(err instanceof Error ? err.message : String(err))) return []
     throw err
@@ -737,24 +739,32 @@ async function requireAdmin(): Promise<{ user: any } | { error: string }> {
   return { user }
 }
 
+/** One user (or none if not found), in the same shape the full list uses. */
+async function oneUser(id: string): Promise<any[]> {
+  const { data, error } = await supabaseAdmin.auth.admin.getUserById(id)
+  if (error || !data?.user) return []
+  return [data.user]
+}
+
 /** The week worked out from shifts and today's rates. */
 const SHIFT_COLUMNS = 'id, user_id, status, start_time, created_at, odometer_start, odometer_end, total_distance'
 // Extra details only the Excel report needs (kept separate, so the tab never depends on them)
 const SHIFT_REPORT_COLUMNS = SHIFT_COLUMNS + ', end_time, vehicle_type, start_location, end_location, total_paused_seconds, orders_count, visits_count, total_order_value, cash_collected, online_collected, market_due'
 
-async function liveWeek(monday: string, detailed = false) {
+async function liveWeek(monday: string, detailed = false, onlyUserId?: string) {
   const week = weekRange(monday)
+  // onlyUserId: the edit window needs one person only, so read just their shifts and just that user
   const [shifts, users, corrections] = await Promise.all([
-    selectAllPages((from, to) =>
-      supabaseAdmin.from('shifts')
+    selectAllPages((from, to) => {
+      let q = supabaseAdmin.from('shifts')
         .select(detailed ? SHIFT_REPORT_COLUMNS : SHIFT_COLUMNS)
         // shifts started this week (older shifts without a start time go by when they were created)
         .or(`and(start_time.gte.${week.from},start_time.lt.${week.to}),and(start_time.is.null,created_at.gte.${week.from},created_at.lt.${week.to})`)
-        .order('id', { ascending: true })
-        .range(from, to)
-    ),
-    listAllUsersCached(),
-    loadCorrections(monday, monday)
+      if (onlyUserId) q = q.eq('user_id', onlyUserId)
+      return q.order('id', { ascending: true }).range(from, to)
+    }),
+    onlyUserId ? oneUser(onlyUserId) : listAllUsersCached(),
+    loadCorrections(monday, monday, onlyUserId)
   ])
 
   const byUser = new Map<string, any[]>()
@@ -1074,10 +1084,10 @@ export async function fetchAllowanceEditData(monday: string, userId: string): Pr
   if ('error' in auth) return { error: auth.error }
   if (!isYmd(monday) || mondayOf(monday) !== monday || !isUuid(userId)) return { error: 'Choose a person and a week first.' }
   try {
-    if (await paidFor(monday, userId)) return { error: 'This week is marked as paid. Press "Undo paid" first, then correct it and mark it paid again.' }
     // The version is read BEFORE the figures: if someone saves in between, our save is refused, never the other way round.
     const token = await corrToken(monday, userId)
-    const live = await liveWeek(monday)
+    const [paid, live, allHistory] = await Promise.all([paidFor(monday, userId), liveWeek(monday, false, userId), loadCorrectionHistory(monday, monday, userId)])
+    if (paid) return { error: 'This week is marked as paid. Press "Undo paid" first, then correct it and mark it paid again.' }
     const user = live.users.find((u: any) => u.id === userId)
     const row = live.rows.find(r => r.userId === userId)
     if (!user || !row) return { error: 'This person was not found.' }
@@ -1095,7 +1105,7 @@ export async function fetchAllowanceEditData(monday: string, userId: string): Pr
         edited: (!!o !== !!c) || (!!o && !!c && Math.abs((o?.km ?? 0) - (c?.km ?? 0)) > 0.004)
       })
     }
-    const history = (await loadCorrectionHistory(monday, monday)).filter(h => h.userId === userId)
+    const history = allHistory.filter(h => h.userId === userId)
     return {
       success: true, monday, label: live.week.label, userId, name: row.name,
       foodRate, kmRate, days, extra: row.extra, token, today: todayIST(), history
@@ -1121,8 +1131,9 @@ export async function saveAllowanceCorrection(
   if (!Number.isFinite(extraAmt) || Math.abs(extraAmt) > 100000) return { error: 'The extra amount looks wrong. Nothing was saved.' }
 
   try {
-    if (await paidFor(monday, userId)) return { error: 'This week is marked as paid. Press "Undo paid" first, then correct it and mark it paid again.' }
-    const live = await liveWeek(monday)
+    // (the database re-checks "paid" and "changed by someone else" itself, inside the save)
+    const [paid, live] = await Promise.all([paidFor(monday, userId), liveWeek(monday, false, userId)])
+    if (paid) return { error: 'This week is marked as paid. Press "Undo paid" first, then correct it and mark it paid again.' }
     const user = live.users.find((u: any) => u.id === userId)
     if (!user) return { error: 'This person was not found.' }
     const { foodRate, kmRate } = allowanceRates(user.app_metadata)
@@ -1167,7 +1178,7 @@ export async function saveAllowanceCorrection(
       if (/ALLOWANCE_NEEDS_REASON/.test(m)) return { error: 'Please write a short reason for the correction.' }
       return { error: m }
     }
-    revalidatePath('/dashboard/sales')
+    // No page refresh needed: the Allowances tab reads its figures again by itself after a save
     return { success: true }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
